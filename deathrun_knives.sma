@@ -4,7 +4,7 @@
 #include <hamsandwich>
 
 #define PLUGIN "Deathrun: Knives"
-#define VERSION "0.2"
+#define VERSION "0.3"
 #define AUTHOR "Mistrick"
 
 #pragma semicolon 1
@@ -33,7 +33,8 @@ enum _:KNIFE_INFO
 	SOUND_HIT[64],
 	SOUND_STAB[64],
 	SOUND_HITWALL[64],
-	SOUND_SLASH[64]
+	SOUND_SLASH[64],
+	SOUND_DEPLOY[64]
 }
 
 new g_eKnives[][KNIFE_INFO] = 
@@ -52,7 +53,8 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_hit1.wav",//sound_hit
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
-		"weapons/knife_slash1.wav"//sound_slash
+		"weapons/knife_slash1.wav",//sound_slash
+		"weapons/knife_deploy.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -68,7 +70,8 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_hit1.wav",//sound_hit
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
-		"weapons/knife_slash1.wav"//sound_slash
+		"weapons/knife_slash1.wav",//sound_slash
+		"weapons/knife_deploy.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -84,7 +87,8 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_hit1.wav",//sound_hit
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
-		"weapons/knife_slash1.wav"//sound_slash
+		"weapons/knife_slash1.wav",//sound_slash
+		"weapons/knife_deploy.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -100,7 +104,8 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_hit1.wav",//sound_hit
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
-		"weapons/knife_slash1.wav"//sound_slash
+		"weapons/knife_slash1.wav",//sound_slash
+		"weapons/knife_deploy.wav"//sound_deploy
 	}
 };
 
@@ -132,6 +137,7 @@ public plugin_precache()
 		precache_sound(g_eKnives[i][SOUND_STAB]);
 		precache_sound(g_eKnives[i][SOUND_HITWALL]);
 		precache_sound(g_eKnives[i][SOUND_SLASH]);
+		precache_sound(g_eKnives[i][SOUND_DEPLOY]);
 	}
 }
 public client_putinserver(id)
@@ -209,7 +215,11 @@ public FM_EmitSound_Pre(id, channel, sample[])
 		else if(sample[17] == 'b')//stab
 		{
 			emit_sound(id, CHAN_WEAPON, g_eKnives[knife][SOUND_STAB], random_float(0.5, 1.0), ATTN_NORM, 0, PITCH_NORM);
-		}//deploy??
+		}
+		else//deploy
+		{
+			emit_sound(id, CHAN_WEAPON, g_eKnives[knife][SOUND_DEPLOY], random_float(0.5, 1.0), ATTN_NORM, 0, PITCH_NORM);
+		}
 		return FMRES_SUPERCEDE;
 	}
 	
