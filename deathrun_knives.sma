@@ -4,7 +4,7 @@
 #include <hamsandwich>
 
 #define PLUGIN "Deathrun: Knives"
-#define VERSION "0.1"
+#define VERSION "0.2"
 #define AUTHOR "Mistrick"
 
 #pragma semicolon 1
@@ -12,7 +12,9 @@
 const XO_CBASEPLAYERWEAPON = 4;
 const XO_CBASEPLAYER = 5;
 const m_pPlayer = 41;
-const m_flWeaponSpeed = 58;
+const m_flNextPrimaryAttack = 46;
+const m_flNextSecondaryAttack= 47;
+const m_flTimeWeaponIdle = 48;
 const m_pActiveItem = 373;
 const PDATA_SAFE = 2;
 
@@ -21,6 +23,8 @@ enum _:KNIFE_INFO
 	NAME[32],
 	DESCRIPTION[32],
 	ACCESS,
+	Float:ATTACK_SPEED_RATE_1,
+	Float:ATTACK_SPEED_RATE_2,
 	Float:GRAVITY,
 	Float:MAXSPEED,
 	Float:DAMAGE,
@@ -35,32 +39,68 @@ enum _:KNIFE_INFO
 new g_eKnives[][KNIFE_INFO] = 
 {
 	{
-		"Default",
-		"\y[HP Regeneration]",
-		0,
-		1.0,
-		250.0,
-		1.0,
-		"models/v_knife.mdl",
-		"models/p_knife.mdl",
-		"weapons/knife_hit1.wav",
-		"weapons/knife_stab.wav",
-		"weapons/knife_hitwall1.wav",
-		"weapons/knife_slash1.wav"
+		"Default",//Name
+		"\y[HP Regeneration]",//Description
+		0,//Admin Access
+		1.0,//Attack1 Speed
+		1.0,//Attack2 Speed
+		1.0,//Gravity
+		250.0,//MaxSpeed
+		1.0,//Damage
+		"models/v_knife.mdl",//v_model
+		"models/p_knife.mdl",//p_model
+		"weapons/knife_hit1.wav",//sound_hit
+		"weapons/knife_stab.wav",//sound_stab
+		"weapons/knife_hitwall1.wav",//sound_hitwall
+		"weapons/knife_slash1.wav"//sound_slash
 	},
 	{
-		"Default++",
-		"\y[Speed++, Gravity++]",
-		ADMIN_LEVEL_A,
-		0.7,
-		350.0,
-		1.0,
-		"models/v_knife.mdl",
-		"models/p_knife.mdl",
-		"weapons/knife_hit1.wav",
-		"weapons/knife_stab.wav",
-		"weapons/knife_hitwall1.wav",
-		"weapons/knife_slash1.wav"
+		"Default",//Name
+		"\y[Speed++, Gravity++]",//Description
+		ADMIN_LEVEL_A,//Admin Access
+		1.0,//Attack1 Speed
+		1.0,//Attack2 Speed
+		0.7,//Gravity
+		350.0,//MaxSpeed
+		1.0,//Damage
+		"models/v_knife.mdl",//v_model
+		"models/p_knife.mdl",//p_model
+		"weapons/knife_hit1.wav",//sound_hit
+		"weapons/knife_stab.wav",//sound_stab
+		"weapons/knife_hitwall1.wav",//sound_hitwall
+		"weapons/knife_slash1.wav"//sound_slash
+	},
+	{
+		"Default",//Name
+		"\y[Slow Attack Speed, Damage++]",//Description
+		0,//Admin Access
+		0.5,//Attack1 Speed
+		0.5,//Attack2 Speed
+		1.0,//Gravity
+		250.0,//MaxSpeed
+		2.0,//Damage
+		"models/v_knife.mdl",//v_model
+		"models/p_knife.mdl",//p_model
+		"weapons/knife_hit1.wav",//sound_hit
+		"weapons/knife_stab.wav",//sound_stab
+		"weapons/knife_hitwall1.wav",//sound_hitwall
+		"weapons/knife_slash1.wav"//sound_slash
+	},
+	{
+		"Default",//Name
+		"\y[Fast Attack Speed, Damage--]",//Description
+		0,//Admin Access
+		2.0,//Attack1 Speed
+		2.0,//Attack2 Speed
+		1.0,//Gravity
+		250.0,//MaxSpeed
+		0.5,//Damage
+		"models/v_knife.mdl",//v_model
+		"models/p_knife.mdl",//p_model
+		"weapons/knife_hit1.wav",//sound_hit
+		"weapons/knife_stab.wav",//sound_stab
+		"weapons/knife_hitwall1.wav",//sound_hitwall
+		"weapons/knife_slash1.wav"//sound_slash
 	}
 };
 
@@ -76,6 +116,9 @@ public plugin_init()
 	register_clcmd("say /knife", "Command_Knife");
 	RegisterHam(Ham_Item_Deploy, "weapon_knife", "Ham_Knife_Deploy_Post", true);
 	RegisterHam(Ham_Item_Holster, "weapon_knife", "Ham_Knife_Holster_Post", true);
+	RegisterHam(Ham_Weapon_PrimaryAttack, "weapon_knife", "Ham_Knife_PrimaryAttack_Post", true);
+	RegisterHam(Ham_Weapon_SecondaryAttack, "weapon_knife", "Ham_Knife_SecondaryAttack_Post", true);
+	RegisterHam(Ham_CS_Item_GetMaxSpeed, "weapon_knife", "Ham_CS_Item_GetMaxSpeed_Pre", false);
 	RegisterHam(Ham_TakeDamage, "player", "Ham_TakeDamage_Pre", false);
 	register_forward(FM_EmitSound, "FM_EmitSound_Pre", false);
 }
@@ -134,7 +177,7 @@ public KnivesMenu_Handler(id, menu, item)
 		set_pev(id, pev_weaponmodel2, g_eKnives[knife][MODEL_P]);
 		if(knife == 0)
 		{
-			set_task(DEFAULTABILITY_INTERVAL, "Task_DefaultKnifeAbility", player, .flags = "b");
+			set_task(DEFAULTABILITY_INTERVAL, "Task_DefaultKnifeAbility", id, .flags = "b");
 		}
 	}
 	
@@ -172,6 +215,13 @@ public FM_EmitSound_Pre(id, channel, sample[])
 	
 	return FMRES_IGNORED;
 }
+public Ham_CS_Item_GetMaxSpeed_Pre(weapon)
+{
+	new player = get_pdata_cbase(weapon, m_pPlayer, XO_CBASEPLAYERWEAPON);
+	new knife = g_iPlayerKnife[player];
+	SetHamReturnFloat(g_eKnives[knife][MAXSPEED]);
+	return HAM_SUPERCEDE;
+}
 public Ham_Knife_Deploy_Post(weapon)
 {
 	new player = get_pdata_cbase(weapon, m_pPlayer, XO_CBASEPLAYERWEAPON);
@@ -182,7 +232,6 @@ public Ham_Knife_Deploy_Post(weapon)
 	set_pev(player, pev_gravity, g_eKnives[knife][GRAVITY]);
 	set_pev(player, pev_viewmodel2, g_eKnives[knife][MODEL_V]);
 	set_pev(player, pev_weaponmodel2, g_eKnives[knife][MODEL_P]);
-	set_pdata_float(weapon, m_flWeaponSpeed, g_eKnives[knife][MAXSPEED], XO_CBASEPLAYERWEAPON);
 	
 	//DefaultKnife Ability
 	if(g_iPlayerKnife[player] == 0 && !task_exists(player))
@@ -195,6 +244,26 @@ public Ham_Knife_Holster_Post(weapon)
 	new player = get_pdata_cbase(weapon, m_pPlayer, XO_CBASEPLAYERWEAPON);
 	set_pev(player, pev_gravity, g_fOldGravity[player]);
 	remove_task(player);
+}
+public Ham_Knife_PrimaryAttack_Post(weapon)
+{
+	new player = get_pdata_cbase(weapon, m_pPlayer, XO_CBASEPLAYERWEAPON);
+	new knife = g_iPlayerKnife[player];
+	new Float:flRate = 0.35 / g_eKnives[knife][ATTACK_SPEED_RATE_1];
+	
+	set_pdata_float(weapon, m_flNextPrimaryAttack, flRate, XO_CBASEPLAYERWEAPON);
+	set_pdata_float(weapon, m_flNextSecondaryAttack, flRate, XO_CBASEPLAYERWEAPON);
+	set_pdata_float(weapon, m_flTimeWeaponIdle, flRate, XO_CBASEPLAYERWEAPON);
+}
+public Ham_Knife_SecondaryAttack_Post(weapon)
+{
+	new player = get_pdata_cbase(weapon, m_pPlayer, XO_CBASEPLAYERWEAPON);
+	new knife = g_iPlayerKnife[player];
+	new Float:flRate = 1.0 / g_eKnives[knife][ATTACK_SPEED_RATE_2];
+
+	set_pdata_float(weapon, m_flNextPrimaryAttack, flRate, XO_CBASEPLAYERWEAPON);
+	set_pdata_float(weapon, m_flNextSecondaryAttack, flRate, XO_CBASEPLAYERWEAPON);
+	set_pdata_float(weapon, m_flTimeWeaponIdle, flRate, XO_CBASEPLAYERWEAPON);
 }
 public Ham_TakeDamage_Pre(victim, idinflictor, attacker, Float:damage, damagebits)
 {
