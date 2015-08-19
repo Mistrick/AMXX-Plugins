@@ -54,7 +54,7 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
 		"weapons/knife_slash1.wav",//sound_slash
-		"weapons/knife_deploy.wav"//sound_deploy
+		"weapons/knife_deploy1.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -71,7 +71,7 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
 		"weapons/knife_slash1.wav",//sound_slash
-		"weapons/knife_deploy.wav"//sound_deploy
+		"weapons/knife_deploy1.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -88,7 +88,7 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
 		"weapons/knife_slash1.wav",//sound_slash
-		"weapons/knife_deploy.wav"//sound_deploy
+		"weapons/knife_deploy1.wav"//sound_deploy
 	},
 	{
 		"Default",//Name
@@ -105,7 +105,7 @@ new g_eKnives[][KNIFE_INFO] =
 		"weapons/knife_stab.wav",//sound_stab
 		"weapons/knife_hitwall1.wav",//sound_hitwall
 		"weapons/knife_slash1.wav",//sound_slash
-		"weapons/knife_deploy.wav"//sound_deploy
+		"weapons/knife_deploy1.wav"//sound_deploy
 	}
 };
 
