@@ -30,7 +30,9 @@ enum (+=100)
 	TASK_TIMER,
 	TASK_VOTEMENU,
 	TASK_CHECKTIME,
-	TASK_CHANGELEVEL
+	TASK_CHANGELEVEL,
+	TASK_CHANGETODEFAULT,
+	TASK_CHECKNIGHT
 }
 
 new const FILE_MAPS[] = "maps.ini";//configdir
@@ -41,7 +43,7 @@ new const PREFIX[] = "^4[MapManager]";
 new Array:g_aMaps, Array:g_aNominatedMaps;
 
 #define SELECT_MAPS 5//max 8
-#define VOTE_TIME 15
+#define VOTE_TIME 10
 #define SOUND_TIME 10//MAX 10
 #define NOMINATE_MAX 3
 #define NOMINATE_PLAYER_MAX 3
@@ -57,8 +59,17 @@ enum _:CVARS
 	START_VOTE_BEFORE_END,
 	START_VOTE_TIME,
 	BLACK_SCREEN,
+	LAST_ROUND,
+	CHANGE_TO_DEDAULT,
+	DEFAULT_MAP,
+	NIGHT_MODE,
+	NIGHT_TIME,
+	NIGHT_MAP,
+	NIGHT_BLOCK_CMDS,
 	ROCK_THE_VOTE,
+	ROCK_MODE,
 	ROCK_PERCENT,
+	ROCK_PLAYERS,
 	ROCK_CHANGE_TYPE,
 	ROCK_DELAY,
 	ROCK_BEFORE_END_BLOCK,
@@ -70,7 +81,8 @@ enum _:CVARS
 	CHATTIME,
 	TIMELIMIT,
 	MAXROUNDS,
-	WINLIMIT
+	WINLIMIT,
+	FRIENDLYFIRE
 }
 
 new g_pCvars[CVARS];
@@ -91,6 +103,8 @@ new g_iExtendedMax;
 new g_iPage[33];
 new g_iTeamScore[2];
 new g_iStartPlugin;
+new Float:g_fOldTimeLimit;
+new g_bNightMode;
 
 #if MAP_BLOCK > 1
 new g_eBlockedMaps[MAP_BLOCK][BLOCKEDMAP_INFO];
@@ -106,22 +120,35 @@ public plugin_init()
 {
 	register_plugin(PLUGIN, VERSION, AUTHOR);	
 	
+	register_cvar("mm_version", VERSION, FCVAR_SERVER | FCVAR_SPONLY);
+	
 	g_pCvars[LOAD_MAPS_TYPE] = register_cvar("mm_load_maps_type", "1");//0 - load all maps from maps folder, 1 - load maps from files
-	g_pCvars[CHANGE_TYPE] = register_cvar("mm_change_type", "1");//0 - after end vote, 1 - in round end, 2 - after end map
+	g_pCvars[CHANGE_TYPE] = register_cvar("mm_change_type", "2");//0 - after end vote, 1 - in round end, 2 - after end map
 	g_pCvars[SHOW_RESULT_TYPE] = register_cvar("mm_show_result_type", "1");//0 - disable, 1 - menu, 2 - hud
 	g_pCvars[SHOW_SELECTS] = register_cvar("mm_show_selects", "1");//0 - disable, 1 - all, 2 - self
 	g_pCvars[START_VOTE_BEFORE_END] = register_cvar("mm_start_vote_before_end", "2");//minutes
 	g_pCvars[START_VOTE_TIME] = register_cvar("mm_start_vote_time", "0");//if timelimit == 0
 	g_pCvars[BLACK_SCREEN] = register_cvar("mm_black_screen", "0");//0 - disable, 1 - enable
+	g_pCvars[LAST_ROUND] = register_cvar("mm_last_round", "0");//0 - disable, 1 - enable
+	
+	g_pCvars[CHANGE_TO_DEDAULT] = register_cvar("mm_change_to_default_map", "5");//minutes
+	g_pCvars[DEFAULT_MAP] = register_cvar("mm_default_map", "de_dust2");
+	
+	g_pCvars[NIGHT_MODE] = register_cvar("mm_night_mode", "0");//0 - disable, 1 - enable
+	g_pCvars[NIGHT_TIME] = register_cvar("mm_night_time", "23:00 8:00");
+	g_pCvars[NIGHT_MAP] = register_cvar("mm_night_map", "de_dust2");
+	g_pCvars[NIGHT_BLOCK_CMDS] = register_cvar("mm_night_block_cmds", "1");//0 - disable, 1 - enable
 	
 	g_pCvars[EXENDED_MAX] = register_cvar("mm_extended_map_max", "3");
 	g_pCvars[EXENDED_TIME] = register_cvar("mm_extended_time", "15");//minutes
 		
 	g_pCvars[NOMINATION] = register_cvar("mm_nomination", "1");//nominate on/off (1/0)
 	
-	g_pCvars[ROCK_THE_VOTE] = register_cvar("mm_rock_the_vote", "1");
+	g_pCvars[ROCK_THE_VOTE] = register_cvar("mm_rock_the_vote", "1");//0 - disable, 1 - enable
 	g_pCvars[ROCK_CHANGE_TYPE] = register_cvar("mm_rtv_change", "0");//0 - after vote, 1 - in round end
+	g_pCvars[ROCK_MODE] = register_cvar("mm_rock_mode", "0");//0 - percents, 1 - players
 	g_pCvars[ROCK_PERCENT] = register_cvar("mm_rtv_percent", "60");
+	g_pCvars[ROCK_PLAYERS] = register_cvar("mm_rtv_players", "5");
 	g_pCvars[ROCK_DELAY] = register_cvar("mm_rtv_delay", "0");//minutes
 	g_pCvars[ROCK_BEFORE_END_BLOCK] = register_cvar("mm_rtv_before_end_block", "0");//minutes
 	g_pCvars[ROCK_SHOW] = register_cvar("mm_rtv_show", "1");//0 - all, 1 - self
@@ -133,16 +160,25 @@ public plugin_init()
 	g_pCvars[TIMELIMIT] = get_cvar_pointer("mp_timelimit");
 	g_pCvars[MAXROUNDS] = get_cvar_pointer("mp_maxrounds");
 	g_pCvars[WINLIMIT] = get_cvar_pointer("mp_winlimit");
+	g_pCvars[FRIENDLYFIRE] = get_cvar_pointer("mp_friendlyfire");
 	
 	register_concmd("mm_debug", "Command_Debug");
 	register_concmd("mm_startvote", "Command_StartVote", ADMIN_MAP);
 	register_concmd("mm_stopvote", "Command_StopVote", ADMIN_MAP);
+	register_clcmd("amx_map", "Command_AmxMapCmd");
+	register_clcmd("amx_votemap", "Command_AmxMapCmd");
+	register_clcmd("amx_mapmenu", "Command_AmxMapCmd");
 	register_clcmd("say", "Command_Say");
 	register_clcmd("say_team", "Command_Say");
 	register_clcmd("say rtv", "Command_RTV");
 	register_clcmd("say /rtv", "Command_RTV");
 	register_clcmd("say maps", "Command_MapsList");
 	register_clcmd("say /maps", "Command_MapsList");
+	register_clcmd("votemap", "Command_Votemap");
+	register_clcmd("say ff", "Command_FriendlyFire");
+	register_clcmd("say nextmap", "Command_Nextmap");
+	register_clcmd("say timeleft", "Command_Timeleft");
+	register_clcmd("say currentmap", "Command_CurrentMap");
 	
 	register_menucmd(register_menuid("VoteMenu"), 1023, "VoteMenu_Handler");
 	register_menucmd(register_menuid("MapsListMenu"), 1023, "MapsListMenu_Handler");
@@ -153,23 +189,23 @@ public plugin_init()
 	register_event("30", "Event_Intermission", "a");
 	
 	set_task(10.0, "Task_CheckTime", TASK_CHECKTIME, .flags = "b");
+	set_task(60.0, "Task_CheckNight", TASK_CHECKNIGHT, .flags = "b");
 }
 public plugin_cfg()
 {
 	get_mapname(g_szCurrentMap, charsmax(g_szCurrentMap));
 	g_aMaps = ArrayCreate(MAPS_INFO); g_aNominatedMaps = ArrayCreate(NOMINATEMAP_INFO);
 	g_iStartPlugin = get_systime();
+	Task_CheckNight();
+	
 	#if MAP_BLOCK > 1
 	LoadBlockedMaps();
 	#endif
-	if(get_pcvar_num(g_pCvars[LOAD_MAPS_TYPE]))
-	{		
-		LoadMapList();
-	}
-	else
-	{
-		LoadMapsFromFolder();
-	}	
+	
+	if(get_pcvar_num(g_pCvars[LOAD_MAPS_TYPE])) LoadMapList();
+	else LoadMapsFromFolder();
+	
+	set_task(get_pcvar_float(g_pCvars[CHANGE_TO_DEDAULT]) * 60.0, "Task_ChangeToDefault", TASK_CHANGETODEFAULT);
 }
 LoadMapList()
 {	
@@ -234,10 +270,13 @@ LoadMapList()
 }
 LoadMapsFromFolder()
 {
-	new len, filename[64], Info[MAPS_INFO], dir = open_dir("maps", filename, charsmax(filename));
+	new len, filename[64], Info[MAPS_INFO], iMapsCount, dir = open_dir("maps", filename, charsmax(filename));
 	
 	if(dir)
 	{
+		#if MAP_BLOCK > 1
+		new iBlockedMaps;
+		#endif
 		while(next_file(dir, filename, charsmax(filename)))
 		{
 			len = strlen(filename) - 4;
@@ -247,13 +286,31 @@ LoadMapsFromFolder()
 			if(equali(filename[len], ".bsp") && !equali(filename, g_szCurrentMap))
 			{
 				filename[len] = '^0';
-				formatex(Info[MAPNAME], 31, filename);
+				formatex(Info[MAPNAME], charsmax(Info[MAPNAME]), filename);
 				Info[MIN] = 0;
 				Info[MAX] = 32;
 				ArrayPushString(g_aMaps, filename);
+				#if MAP_BLOCK > 1
+				if(is_map_blocked(filename))
+				{
+					iBlockedMaps++;
+					for(new i; i < MAP_BLOCK; i++)
+					{
+						if(equali(g_eBlockedMaps[i][MAPNAME], filename)) g_eBlockedMaps[i][INDEX] = iMapsCount;
+					}
+				}
+				#endif
+				iMapsCount++;
 			}
 		}
 		close_dir(dir);
+		
+		#if MAP_BLOCK > 1
+		if(iBlockedMaps >= iMapsCount - SELECT_MAPS)
+		{
+			ClearBlockedMaps();
+		}
+		#endif
 	}
 }
 stock LoadBlockedMaps()
@@ -292,7 +349,6 @@ stock LoadBlockedMaps()
 		
 		formatex(g_eBlockedMaps[i][MAPNAME], charsmax(g_eBlockedMaps[][MAPNAME]), szMapName);
 		g_eBlockedMaps[i][COUNT] = iCount;
-		g_eBlockedMaps[i][INDEX] = is_map_in_array(szMapName) - 1;
 		
 		if(++i >= MAP_BLOCK) break;
 	}
@@ -324,6 +380,8 @@ public plugin_end()
 	{
 		set_pcvar_float(g_pCvars[TIMELIMIT], get_pcvar_float(g_pCvars[TIMELIMIT]) - float(g_iExtendedMax * get_pcvar_num(g_pCvars[EXENDED_TIME])));
 	}
+	
+	if(g_fOldTimeLimit > 0.0) set_pcvar_float(g_pCvars[TIMELIMIT], g_fOldTimeLimit);
 	
 	#if MAP_BLOCK > 1
 	SaveBlockedMaps();
@@ -367,12 +425,28 @@ public Event_NewRound()
 	{
 		StartVote(0);
 	}
-	if(g_bVoteFinished && (get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1 || g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1))
-	{		
+	if(g_bVoteFinished && (get_pcvar_num(g_pCvars[LAST_ROUND]) || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1 || g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1))
+	{
+		if(get_pcvar_num(g_pCvars[LAST_ROUND])) set_pcvar_float(g_pCvars[TIMELIMIT], g_fOldTimeLimit);
+		
 		Intermission();
-		set_task(5.0, "ChangeLevel", TASK_CHANGELEVEL);
-		new szMapName[33]; get_pcvar_string(g_pCvars[NEXTMAP], szMapName, charsmax(szMapName));
+		
+		new szMapName[32]; get_pcvar_string(g_pCvars[NEXTMAP], szMapName, charsmax(szMapName));
 		client_print_color(0, DontChange, "%s^1 Следующая карта:^3 %s^1.", PREFIX, szMapName);
+		
+		set_task(5.0, "ChangeLevel", TASK_CHANGELEVEL);
+	}
+	
+	if(g_bNightMode)
+	{
+		new szMapName[32]; get_pcvar_string(g_pCvars[NIGHT_MAP], szMapName, charsmax(szMapName));
+		if(!equali(szMapName, g_szCurrentMap))
+		{
+			Intermission();
+			set_pcvar_string(g_pCvars[NEXTMAP], szMapName);
+			set_task(5.0, "ChangeLevel", TASK_CHANGELEVEL);
+			client_print_color(0, DontChange, "%s^1 Включен ночной режим на карте:^3 %s^1.", PREFIX, szMapName);
+		}
 	}
 }
 public Event_GameRestart()
@@ -387,7 +461,7 @@ public Event_TeamScore()
 public Event_Intermission()
 {
 	set_pcvar_num(g_pCvars[CHATTIME], get_pcvar_num(g_pCvars[CHATTIME]) + 6);
-	set_task(1.0, "ChangeLevel", TASK_CHANGELEVEL);
+	set_task(3.0, "ChangeLevel", TASK_CHANGELEVEL);
 }
 //***************** Check Time **********************
 public Task_CheckTime()
@@ -414,7 +488,64 @@ public Task_CheckTime()
 	
 	return PLUGIN_CONTINUE;
 }
+public Task_CheckNight()
+{
+	if(!get_pcvar_num(g_pCvars[NIGHT_MODE])) return;
+	
+	new szTime[16]; get_pcvar_string(g_pCvars[NIGHT_TIME], szTime, charsmax(szTime));
+	new szStart[8], szEnd[8]; parse(szTime, szStart, charsmax(szStart), szEnd, charsmax(szEnd));
+	new iStartHour, iStartMinutes, iEndHour, iEndMinutes;
+	get_int_time(szStart, iStartHour, iStartMinutes);
+	get_int_time(szEnd, iEndHour, iEndMinutes);
+	
+	get_time("%H:%M", szTime, charsmax(szTime));
+	new iCurHour, iCurMinutes; get_int_time(szTime, iCurHour, iCurMinutes);	
+	
+	new bOldNightMode = g_bNightMode;
+	
+	if(iStartHour != iEndHour && (iStartHour == iCurHour && iCurMinutes >= iStartMinutes || iEndHour == iCurHour && iCurMinutes < iStartMinutes))
+	{
+		g_bNightMode = true;
+	}
+	else if(iStartHour == iEndHour && iStartMinutes <= iCurMinutes < iEndMinutes)
+	{
+		g_bNightMode = true;
+	}
+	else if(iStartHour > iEndHour && (iStartHour < iCurHour < 24 || 0 <= iCurHour < iEndHour))
+	{
+		g_bNightMode = true;
+	}
+	else if(iStartHour < iCurHour < iEndHour)
+	{
+		g_bNightMode = true;
+	}
+	else
+	{
+		g_bNightMode = false;
+	}
+	
+	if(g_bNightMode && !bOldNightMode)
+	{
+		new szMapName[32]; get_pcvar_string(g_pCvars[NIGHT_MAP], szMapName, charsmax(szMapName));
+		if(equali(szMapName, g_szCurrentMap))
+		{
+			g_fOldTimeLimit = get_pcvar_float(g_pCvars[TIMELIMIT]);
+			set_pcvar_float(g_pCvars[TIMELIMIT], 0.0);
+			client_print_color(0, DontChange, "%s^1 Включен ночной режим до^3 %02d:%02d^1.", PREFIX, iEndHour, iEndMinutes);
+		}		
+	}
+	else if(!g_bNightMode && bOldNightMode)
+	{
+		set_pcvar_float(g_pCvars[TIMELIMIT], g_fOldTimeLimit);
+		client_print_color(0, DontChange, "%s^1 Выключен ночной режим.", PREFIX, iEndHour, iEndMinutes);
+	}
+}
 //***************************************************
+public client_putinserver(id)
+{
+	if(!is_user_bot(id) && !is_user_hltv(id))
+		remove_task(TASK_CHANGETODEFAULT);
+}
 public client_disconnect(id)
 {
 	remove_task(id + TASK_VOTEMENU);
@@ -425,7 +556,17 @@ public client_disconnect(id)
 	}
 	if(g_iNominatedMaps[id])
 	{
-		clear_nominated_maps(id);		
+		clear_nominated_maps(id);
+	}
+	
+	set_task(get_pcvar_float(g_pCvars[CHANGE_TO_DEDAULT]) * 60.0, "Task_ChangeToDefault", TASK_CHANGETODEFAULT);
+}
+public Task_ChangeToDefault()
+{
+	if(get_players_num() == 0)
+	{
+		new szMapName[32]; get_pcvar_string(g_pCvars[DEFAULT_MAP], szMapName, charsmax(szMapName));
+		server_cmd("changelevel %s", szMapName);
 	}
 }
 public Command_Debug(id)
@@ -446,6 +587,44 @@ public Command_Debug(id)
 		}
 	}
 	return PLUGIN_HANDLED;
+}
+public Command_AmxMapCmd(id)
+{
+	if(g_bNightMode && get_pcvar_num(g_pCvars[NIGHT_BLOCK_CMDS]))
+	{
+		client_print_color(id, DontChange, "%s^1 Команда запрещена в ночном режиме.", PREFIX);
+		return PLUGIN_HANDLED;
+	}
+	return PLUGIN_CONTINUE;
+}
+public Command_Votemap(id)
+{
+	return PLUGIN_HANDLED;
+}
+public Command_FriendlyFire(id)
+{
+	client_print_color(0, DontChange, "%s^1 На сервере^3 %s^1 огонь по своим.", PREFIX, get_pcvar_num(g_pCvars[FRIENDLYFIRE]) ? "разрешен" : "запрещен");
+}
+public Command_Nextmap(id)
+{
+	new szMapName[32]; get_pcvar_string(g_pCvars[NEXTMAP], szMapName, charsmax(szMapName));
+	client_print_color(0, id, "%s^1 Следующая карта: ^3%s^1.", PREFIX, szMapName);
+}
+public Command_Timeleft(id)
+{
+	if (get_pcvar_num(g_pCvars[TIMELIMIT]))
+	{
+		new a = get_timeleft();
+		client_print_color(0, id, "%s^1 До конца карты осталось:^3 %d:%02d", PREFIX, (a / 60), (a % 60));
+	}
+	else
+	{
+		client_print_color(0, DontChange, "%s^1 Карта не ограничена по времени.", PREFIX);
+	}
+}
+public Command_CurrentMap(id)
+{
+	client_print_color(0, id, "%s^1 Текущая карта:^3 %s^1.", PREFIX, g_szCurrentMap);
 }
 public Command_MapsList(id)
 {
@@ -539,7 +718,13 @@ public Command_RTV(id)
 	
 	if(!get_pcvar_num(g_pCvars[ROCK_THE_VOTE])) return PLUGIN_CONTINUE;
 	
-	if(g_pCvars[ROCK_BLOCK_WITH_ADMIN] && check_admins())
+	if(g_bNightMode)
+	{
+		client_print_color(id, DontChange, "%s^1 Команда запрещена в ночном режиме.", PREFIX);
+		return PLUGIN_HANDLED;
+	}
+	
+	if(get_pcvar_num(g_pCvars[ROCK_BLOCK_WITH_ADMIN]) && check_admins())
 	{
 		client_print_color(id, DontChange, "%s^1 Недоступно, на сервере есть администратор.", PREFIX);
 		return PLUGIN_HANDLED;
@@ -565,7 +750,16 @@ public Command_RTV(id)
 		g_bRockVoted[id] = true;
 		g_iRockVote++;
 		
-		new iVote = floatround(get_players_num() * get_pcvar_num(g_pCvars[ROCK_PERCENT]) / 100.0, floatround_ceil) - g_iRockVote;
+		new iVote;
+		
+		if(g_pCvars[ROCK_MODE])
+		{
+			iVote = get_pcvar_num(g_pCvars[ROCK_PLAYERS]) - g_iRockVote;
+		}
+		else
+		{
+			iVote = floatround(get_players_num() * get_pcvar_num(g_pCvars[ROCK_PERCENT]) / 100.0, floatround_ceil) - g_iRockVote;
+		}
 		
 		if(iVote > 0)
 		{
@@ -600,6 +794,13 @@ public Command_RTV(id)
 public Command_StartVote(id, flag)
 {
 	if(~get_user_flags(id) & flag) return PLUGIN_HANDLED;
+	
+	if(g_bNightMode && get_pcvar_num(g_pCvars[NIGHT_BLOCK_CMDS]))
+	{
+		client_print_color(id, DontChange, "%s^1 Команда запрещена в ночном режиме.", PREFIX);
+		return PLUGIN_HANDLED;
+	}
+	
 	StartVote(id);
 	return PLUGIN_HANDLED;
 }
@@ -623,7 +824,7 @@ public Command_StopVote(id, flag)
 		}
 		show_menu(0, 0, "^n", 1);
 		new szName[32]; get_user_name(id, szName, charsmax(szName));
-		client_print_color(0, id, "^4%s^3 %s^1 отменил голосование.", PREFIX, szName);
+		client_print_color(0, id, "%s^3 %s^1 отменил голосование.", PREFIX, szName);
 	}
 	
 	return PLUGIN_HANDLED;
@@ -695,6 +896,7 @@ NominateMap(id, map[32], index)
 	
 	return PLUGIN_HANDLED;
 }
+//************************************************
 public StartVote(id)
 {
 	if(g_bVoteStarted)
@@ -724,7 +926,7 @@ public StartVote(id)
 		ArrayGetArray(g_aMaps, i, MapsInfo);
 		if(MapsInfo[MIN] <= players_num <= MapsInfo[MAX] && !is_map_blocked_num(i))
 		{
-			formatex(VoteInfo[MAPNAME], 31, MapsInfo[MAPNAME]);
+			formatex(VoteInfo[MAPNAME], charsmax(VoteInfo[MAPNAME]), MapsInfo[MAPNAME]);
 			VoteInfo[INDEX] = i;
 			iVoteInfoSize++;
 			ArrayPushArray(array, VoteInfo);
@@ -736,7 +938,7 @@ public StartVote(id)
 		{
 			iNum = random_num(0, ArraySize(g_aNominatedMaps) - 1);
 			ArrayGetArray(g_aNominatedMaps, iNum, NomInfo);
-			formatex(g_eVoteMenu[i][MAPNAME], 31, NomInfo[MAPNAME]);
+			formatex(g_eVoteMenu[i][MAPNAME], charsmax(g_eVoteMenu[][MAPNAME]), NomInfo[MAPNAME]);
 			g_eVoteMenu[i][INDEX] = NomInfo[INDEX];
 			ArrayDeleteItem(g_aNominatedMaps, iNum);
 			g_iNominatedMaps[NomInfo[PLAYER]]--;
@@ -752,7 +954,7 @@ public StartVote(id)
 				iNum = random_num(0, ArraySize(array) - 1);
 			}
 			ArrayGetArray(array, iNum, VoteInfo);
-			formatex(g_eVoteMenu[i][MAPNAME], 31, VoteInfo[MAPNAME]);
+			formatex(g_eVoteMenu[i][MAPNAME], charsmax(g_eVoteMenu[][MAPNAME]), VoteInfo[MAPNAME]);
 			g_eVoteMenu[i][INDEX] = VoteInfo[INDEX];
 			ArrayDeleteItem(array, iNum);
 		}
@@ -762,7 +964,7 @@ public StartVote(id)
 			while(is_map_in_menu(iNum) || is_map_blocked_num(iNum));
 			
 			ArrayGetArray(g_aMaps, iNum, MapsInfo);
-			formatex(g_eVoteMenu[i][MAPNAME], 31, MapsInfo[MAPNAME]);
+			formatex(g_eVoteMenu[i][MAPNAME], charsmax(g_eVoteMenu[][MAPNAME]), MapsInfo[MAPNAME]);
 			g_eVoteMenu[i][INDEX] = iNum;
 		}
 	}
@@ -976,7 +1178,7 @@ FinishVote()
 	g_bVoteStarted = false;
 	g_bVoteFinished = true;
 	
-	cmd_screen_fade(0);
+	if(get_pcvar_num(g_pCvars[BLACK_SCREEN])) cmd_screen_fade(0);
 	
 	if(!g_iTotalVotes || (MaxVote != iInMenu))
 	{
@@ -992,7 +1194,13 @@ FinishVote()
 		
 		set_pcvar_string(g_pCvars[NEXTMAP], g_eVoteMenu[MaxVote][MAPNAME]);
 		
-		if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0 || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 0)
+		if(get_pcvar_num(g_pCvars[LAST_ROUND]))
+		{
+			g_fOldTimeLimit = get_pcvar_float(g_pCvars[TIMELIMIT]);
+			set_pcvar_float(g_pCvars[TIMELIMIT], 0.0);
+			client_print_color(0, DontChange, "%s^1 Это последний раунд.", PREFIX);
+		}
+		else if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0 || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 0)
 		{
 			client_print_color(0, DontChange, "%s^1 Карта сменится через^3 5^1 секунд.", PREFIX);
 			Intermission();
@@ -1169,4 +1377,10 @@ Intermission()
 {
 	message_begin(MSG_ALL, SVC_INTERMISSION);
 	message_end();
+}
+get_int_time(string[], &hour, &minutes)
+{
+	new left[4], right[4]; strtok(string, left, charsmax(left), right, charsmax(right), ':');
+	hour = str_to_num(left);
+	minutes = str_to_num(right);
 }
