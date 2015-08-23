@@ -1,5 +1,13 @@
 #include <amxmodx>
+
+#if AMXX_VERSION_NUM < 183
 #include <colorchat>
+#else
+#define DontChange print_team_default
+#define Blue print_team_blue
+#define Red print_team_red
+#define Grey print_team_grey
+#endif
 
 #define PLUGIN "Map Manager"
 #define VERSION "2.0"
@@ -66,7 +74,8 @@ enum _:CVARS
 	NIGHT_TIME,
 	NIGHT_MAP,
 	NIGHT_BLOCK_CMDS,
-	ROCK_THE_VOTE,
+	STOP_VOTE_IN_MENU,
+	ROCK_ENABLE,
 	ROCK_MODE,
 	ROCK_PERCENT,
 	ROCK_PLAYERS,
@@ -142,11 +151,12 @@ public plugin_init()
 	g_pCvars[EXENDED_MAX] = register_cvar("mm_extended_map_max", "3");
 	g_pCvars[EXENDED_TIME] = register_cvar("mm_extended_time", "15");//minutes
 		
-	g_pCvars[NOMINATION] = register_cvar("mm_nomination", "1");//nominate on/off (1/0)
+	g_pCvars[NOMINATION] = register_cvar("mm_nomination", "1");//0 - disable, 1 - enable
+	g_pCvars[STOP_VOTE_IN_MENU] = register_cvar("mm_stop_vote_in_menu", "0");//0 - disable, 1 - enable
 	
-	g_pCvars[ROCK_THE_VOTE] = register_cvar("mm_rock_the_vote", "1");//0 - disable, 1 - enable
+	g_pCvars[ROCK_ENABLE] = register_cvar("mm_rtv_enable", "1");//0 - disable, 1 - enable
 	g_pCvars[ROCK_CHANGE_TYPE] = register_cvar("mm_rtv_change", "0");//0 - after vote, 1 - in round end
-	g_pCvars[ROCK_MODE] = register_cvar("mm_rock_mode", "0");//0 - percents, 1 - players
+	g_pCvars[ROCK_MODE] = register_cvar("mm_rtv_mode", "0");//0 - percents, 1 - players
 	g_pCvars[ROCK_PERCENT] = register_cvar("mm_rtv_percent", "60");
 	g_pCvars[ROCK_PLAYERS] = register_cvar("mm_rtv_players", "5");
 	g_pCvars[ROCK_DELAY] = register_cvar("mm_rtv_delay", "0");//minutes
@@ -162,7 +172,6 @@ public plugin_init()
 	g_pCvars[WINLIMIT] = get_cvar_pointer("mp_winlimit");
 	g_pCvars[FRIENDLYFIRE] = get_cvar_pointer("mp_friendlyfire");
 	
-	register_concmd("mm_debug", "Command_Debug");
 	register_concmd("mm_startvote", "Command_StartVote", ADMIN_MAP);
 	register_concmd("mm_stopvote", "Command_StopVote", ADMIN_MAP);
 	register_clcmd("amx_map", "Command_AmxMapCmd");
@@ -563,30 +572,11 @@ public client_disconnect(id)
 }
 public Task_ChangeToDefault()
 {
-	if(get_players_num() == 0)
-	{
-		new szMapName[32]; get_pcvar_string(g_pCvars[DEFAULT_MAP], szMapName, charsmax(szMapName));
+	new szMapName[32]; get_pcvar_string(g_pCvars[DEFAULT_MAP], szMapName, charsmax(szMapName));
+	if(get_players_num() == 0 && !equali(szMapName, g_szCurrentMap))
+	{		
 		server_cmd("changelevel %s", szMapName);
 	}
-}
-public Command_Debug(id)
-{
-	new size = ArraySize(g_aMaps), Info[MAPS_INFO];
-	console_print(id, "^nLoaded %d maps from %s", size, FILE_MAPS);
-	for(new i; i < size; i++)
-	{
-		ArrayGetArray(g_aMaps, i, Info);
-		console_print(id, "%s %d %d", Info[MAPNAME], Info[MIN], Info[MAX]);
-	}
-	console_print(id, "^nBlocked Maps");
-	for(new i; i < MAP_BLOCK; i++)
-	{
-		if(g_eBlockedMaps[i][COUNT])
-		{
-			console_print(id, "%s %d", g_eBlockedMaps[i][MAPNAME], g_eBlockedMaps[i][COUNT]);
-		}
-	}
-	return PLUGIN_HANDLED;
 }
 public Command_AmxMapCmd(id)
 {
@@ -716,7 +706,7 @@ public Command_RTV(id)
 {
 	if(g_bVoteFinished || g_bVoteStarted) return PLUGIN_HANDLED;
 	
-	if(!get_pcvar_num(g_pCvars[ROCK_THE_VOTE])) return PLUGIN_CONTINUE;
+	if(!get_pcvar_num(g_pCvars[ROCK_ENABLE])) return PLUGIN_CONTINUE;
 	
 	if(g_bNightMode)
 	{
@@ -810,6 +800,8 @@ public Command_StopVote(id, flag)
 	
 	if(g_bVoteStarted)
 	{
+		if(get_pcvar_num(g_pCvars[BLACK_SCREEN])) cmd_screen_fade(0);
+		
 		g_bVoteStarted = false;
 		g_bRockVote = false;
 		g_iRockVote = 0;
@@ -1078,12 +1070,12 @@ public VoteMenu(id)
 		}
 	}
 	
-	/*if(get_pcvar_num(g_pCvars[MENU_STOP_VOTE]) && get_user_flags(id) & ADMIN_MAP)
+	if(get_pcvar_num(g_pCvars[STOP_VOTE_IN_MENU]) && get_user_flags(id) & ADMIN_MAP)
 	{
 		i++;
 		len += formatex(szMenu[len], charsmax(szMenu) - len, "^n\r%d. Отменить голосование^n", i + 1 == 10 ? 0 : i + 1);
 		Key |= (1 << i);
-	}*/
+	}
 	
 	new szSec[16]; get_ending(g_iTimer, "секунд", "секунда", "секунды", szSec, charsmax(szSec));
 	len += formatex(szMenu[len], charsmax(szMenu) - len, "^n\dОсталось \r%d\d %s", g_iTimer, szSec);
@@ -1112,6 +1104,11 @@ public VoteMenu_Handler(id, key)
 	if(g_bPlayerVoted[id])
 	{
 		VoteMenu(id + TASK_VOTEMENU);
+		return PLUGIN_HANDLED;
+	}
+	if(get_pcvar_num(g_pCvars[STOP_VOTE_IN_MENU]) && key == maps_in_menu() + 1)
+	{
+		Command_StopVote(id, ADMIN_MAP);
 		return PLUGIN_HANDLED;
 	}
 	
