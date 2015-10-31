@@ -5,7 +5,7 @@
 #include <hamsandwich>
 
 #define PLUGIN "StrafeHack Blocker"
-#define VERSION "0.7"
+#define VERSION "0.8"
 #define AUTHOR "Mistrick"
 
 #pragma semicolon 1
@@ -60,7 +60,8 @@ public plugin_init()
 {
 	register_plugin(PLUGIN, VERSION, AUTHOR);
 	register_forward(FM_CmdStart, "FM_CmdStart_Pre", 0);
-	register_forward(FM_PlayerPreThink, "FM_PlayerPreThink_Pre", 0);
+	register_forward(FM_PlayerPreThink, "FM_PlayerPreThink_Pre", false);
+	register_forward(FM_PlayerPreThink, "FM_PlayerPreThink_Post", true);
 	RegisterHam(Ham_Spawn, "player", "Ham_PlayerSpawn_Post", true);
 	
 	new szWeaponName[32];
@@ -175,7 +176,7 @@ public FM_CmdStart_Pre(id, uc_handle, seed)
 	if(fValue > fMaxSpeed && fMaxSpeed > 100.0)
 	{
 		bBlockSpeed = true;
-		UTIL_LogUser(id, "CheatMoves: value[%.1f] > maxspeed[%.1f]", fValue, fMaxSpeed);
+		UTIL_LogUser(id, "CheatMoves: value[%.1f], fw[%.1f], sd[%.1f], maxspeed[%.1f]", fValue, fForwardMove, fSideMove, fMaxSpeed);
 	}
 	if(iButtons & IN_LEFT || iButtons & IN_RIGHT)
 	{
