@@ -246,7 +246,7 @@ LoadMapsFromFile()
 			fclose(f);
 			
 			#if defined FUNCTION_NEXTMAP
-			new RandomMap = random_num(0, ArraySize(g_aMaps));
+			new RandomMap = random_num(0, ArraySize(g_aMaps) - 1);
 			ArrayGetArray(g_aMaps, RandomMap, eMapInfo);
 			set_pcvar_string(g_pCvars[NEXTMAP], eMapInfo[m_Name]);
 			#endif
