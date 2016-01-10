@@ -12,9 +12,9 @@
 
 ///******** Settings ********///
 
-//#define FUNCTION_NEXTMAP//replace default nextmap
+#define FUNCTION_NEXTMAP //replace default nextmap
 //#define FUNCTION_BLOCK_MAPS
-//#define FUNCTION_RTV
+#define FUNCTION_RTV
 //#define FUNCTION_NOMINATION
 #define FUNCTION_SOUND
 
@@ -56,6 +56,10 @@ enum _:CVARS
 	SHOW_SELECTS,
 	EXENDED_MAX,
 	EXENDED_TIME,
+	ROCK_MODE,
+	ROCK_PERCENT,
+	ROCK_PLAYERS,
+	ROCK_CHANGE_TYPE,
 	MAXROUNDS,
 	WINLIMIT,
 	TIMELIMIT,
@@ -81,11 +85,17 @@ new g_iExtendedMax;
 #if defined FUNCTION_SOUND
 new const g_szSound[][] =
 {
-	"",	"fvox/one",	"fvox/two",	"fvox/three", "fvox/four", "fvox/five",
-	"fvox/six", "fvox/seven", "fvox/eight",	"fvox/nine", "fvox/ten"
+	"", "sound/fvox/one.wav", "sound/fvox/two.wav", "sound/fvox/three.wav", "sound/fvox/four.wav", "sound/fvox/five.wav",
+	"sound/fvox/six.wav", "sound/fvox/seven.wav", "sound/fvox/eight.wav", "sound/fvox/nine.wav", "sound/fvox/ten.wav"
 };
 #endif
 
+#if defined FUNCTION_RTV
+new g_bRockVoted[33];
+new g_iRockVotes;
+new g_bRockVote;
+#endif
+ 
 public plugin_init()
 {
 	register_plugin(PLUGIN, VERSION, AUTHOR);
@@ -99,6 +109,13 @@ public plugin_init()
 	g_pCvars[EXENDED_MAX] = register_cvar("mm_extended_map_max", "3");
 	g_pCvars[EXENDED_TIME] = register_cvar("mm_extended_time", "15");//minutes
 	
+	#if defined FUNCTION_RTV
+	g_pCvars[ROCK_MODE] = register_cvar("mm_rtv_mode", "0");//0 - percents, 1 - players
+	g_pCvars[ROCK_PERCENT] = register_cvar("mm_rtv_percent", "60");
+	g_pCvars[ROCK_PLAYERS] = register_cvar("mm_rtv_players", "5");
+	g_pCvars[ROCK_CHANGE_TYPE] = register_cvar("mm_rtv_change_type", "1");//0 - after vote, 1 - in round end
+	#endif
+	
 	g_pCvars[MAXROUNDS] = get_cvar_pointer("mp_maxrounds");
 	g_pCvars[WINLIMIT] = get_cvar_pointer("mp_winlimit");
 	g_pCvars[TIMELIMIT] = get_cvar_pointer("mp_timelimit");
@@ -110,6 +127,7 @@ public plugin_init()
 	#endif
 	
 	register_event("TeamScore", "Event_TeamScore", "a");
+	register_event("HLTV", "Event_NewRound", "a", "1=0", "2=0");
 	
 	#if defined FUNCTION_NEXTMAP
 	register_event("30", "Event_Intermisson", "a");
@@ -124,6 +142,11 @@ public plugin_init()
 	register_clcmd("say currentmap", "Command_CurrentMap");
 	#endif
 	
+	#if defined FUNCTION_RTV
+	register_clcmd("say rtv", "Command_RockTheVote");
+	register_clcmd("say /rtv", "Command_RockTheVote");
+	#endif
+	
 	register_menucmd(register_menuid("VoteMenu"), 1023, "VoteMenu_Handler");
 	
 	set_task(10.0, "Task_CheckTime", TASK_CHECKTIME, .flags = "b");
@@ -132,8 +155,8 @@ public Commang_Debug(id)
 {
 	console_print(id, "^nLoaded maps:");
 	
-	new eMapInfo[MAP_INFO], size = ArraySize(g_aMaps);
-	for(new i; i < size; i++)
+	new eMapInfo[MAP_INFO], iSize = ArraySize(g_aMaps);
+	for(new i; i < iSize; i++)
 	{
 		ArrayGetArray(g_aMaps, i, eMapInfo);
 		console_print(id, "%3d %32s ^t%d^t%d", i, eMapInfo[m_Name], eMapInfo[m_Min], eMapInfo[m_Max]);
@@ -152,6 +175,12 @@ public Command_StopVote(id, flag)
 	if(g_bVoteStarted)
 	{		
 		g_bVoteStarted = false;
+		
+		#if defined FUNCTION_RTV
+		g_bRockVote = false;
+		g_iRockVotes = 0;
+		arrayset(g_bRockVoted, false, 33);
+		#endif
 		
 		remove_task(TASK_VOTEMENU);
 		remove_task(TASK_SHOWTIMER);
@@ -172,6 +201,7 @@ public Command_StopVote(id, flag)
 	
 	return PLUGIN_HANDLED;
 }
+
 #if defined FUNCTION_NEXTMAP
 public Command_Nextmap(id)
 {
@@ -183,6 +213,51 @@ public Command_CurrentMap(id)
 	client_print_color(0, id, "%s^1 Текущая карта:^3 %s^1.", PREFIX, g_szCurrentMap);
 }
 #endif
+
+#if defined FUNCTION_RTV
+public Command_RockTheVote(id)
+{
+	if(g_bVoteFinished || g_bVoteStarted) return PLUGIN_HANDLED;
+	
+	if(!g_bRockVoted[id]) g_iRockVotes++;
+	
+	new iVotes;
+	if(get_pcvar_num(g_pCvars[ROCK_MODE]))
+	{
+		iVotes = get_pcvar_num(g_pCvars[ROCK_PLAYERS]) - g_iRockVotes;
+	}
+	else
+	{
+		iVotes = floatround(GetPlayersNum() * get_pcvar_num(g_pCvars[ROCK_PERCENT]) / 100.0, floatround_ceil) - g_iRockVotes;
+	}
+	
+	if(!g_bRockVoted[id])
+	{
+		g_bRockVoted[id] = true;		
+		
+		if(iVotes > 0)
+		{
+			new szName[33];	get_user_name(id, szName, charsmax(szName));
+			new szVote[16];	GetEnding(iVotes, "голосов", "голос", "голоса", szVote, charsmax(szVote));
+			client_print_color(0, print_team_default, "%s^3 %s^1 проголосовал за смену карты. Осталось:^3 %d^1 %s.", PREFIX, szName, iVotes, szVote);
+		}
+		else
+		{
+			g_bRockVote = true;
+			StartVote(0);
+			client_print_color(0, print_team_default, "%s^1 Начинаем досрочное голосование.", PREFIX);
+		}
+	}
+	else
+	{
+		new szVote[16];	GetEnding(iVotes, "голосов", "голос", "голоса", szVote, charsmax(szVote));
+		client_print_color(id, print_team_default, "%s^1 Вы уже голосовали. Осталось:^3 %d^1 %s.", PREFIX, iVotes, szVote);
+	}
+	
+	return PLUGIN_HANDLED;
+}
+#endif
+
 public plugin_end()
 {
 	if(g_iExtendedMax)
@@ -230,7 +305,7 @@ LoadMapsFromFile()
 				fgets(f, szText, charsmax(szText));
 				parse(szText, szMap, charsmax(szMap), szMin, charsmax(szMin), szMax, charsmax(szMax));
 				
-				if(!szMap[0] || szMap[0] == ';' || !valid_map(szMap) || is_map_in_array(szMap) || equali(szMap, g_szCurrentMap)) continue;
+				if(!szMap[0] || szMap[0] == ';' || !ValidMap(szMap) || is_map_in_array(szMap) || equali(szMap, g_szCurrentMap)) continue;
 				
 				#if defined FUNCTION_BLOCK_MAPS
 				if(is_map_blocked(szMap)) continue;
@@ -245,8 +320,15 @@ LoadMapsFromFile()
 			}
 			fclose(f);
 			
+			new iSize = ArraySize(g_aMaps);
+			
+			if(iSize == 0)
+			{
+				set_fail_state("Nothing loaded from file.");
+			}
+			
 			#if defined FUNCTION_NEXTMAP
-			new RandomMap = random_num(0, ArraySize(g_aMaps) - 1);
+			new RandomMap = random_num(0, iSize - 1);
 			ArrayGetArray(g_aMaps, RandomMap, eMapInfo);
 			set_pcvar_string(g_pCvars[NEXTMAP], eMapInfo[m_Name]);
 			#endif
@@ -254,23 +336,48 @@ LoadMapsFromFile()
 	}
 	else
 	{
-		set_fail_state("Maps file don't exists.");
+		set_fail_state("Maps file doesn't exist.");
 	}
 }
 #if defined FUNCTION_NEXTMAP
 public Event_Intermisson()
 {
-	new Float:ChatTime = get_pcvar_float(g_pCvars[CHATTIME]);
-	set_pcvar_float(g_pCvars[CHATTIME], ChatTime + 2.0);
-	set_task(ChatTime, "DelayedChange");
+	new Float:fChatTime = get_pcvar_float(g_pCvars[CHATTIME]);
+	set_pcvar_float(g_pCvars[CHATTIME], fChatTime + 2.0);
+	set_task(fChatTime, "DelayedChange");
 }
 public DelayedChange()
 {
-	new NextMap[32]; get_pcvar_string(g_pCvars[NEXTMAP], NextMap, charsmax(NextMap));
+	new szNextMap[32]; get_pcvar_string(g_pCvars[NEXTMAP], szNextMap, charsmax(szNextMap));
 	set_pcvar_float(g_pCvars[CHATTIME], get_pcvar_float(g_pCvars[CHATTIME]) - 2.0);
-	server_cmd("changelevel %s", NextMap);
+	server_cmd("changelevel %s", szNextMap);
 }
 #endif
+public Event_NewRound()
+{
+	new iMaxRounds = get_pcvar_num(g_pCvars[MAXROUNDS]);
+	if(iMaxRounds && (g_iTeamScore[0] + g_iTeamScore[1]) >= iMaxRounds - 2)
+	{
+		log_amx("StartVote: maxrounds %d [%d]", iMaxRounds, g_iTeamScore[0] + g_iTeamScore[1]);
+		StartVote(0);
+	}
+	
+	new iWinLimit = get_pcvar_num(g_pCvars[WINLIMIT]) - 2;
+	if(iWinLimit > 0 && (g_iTeamScore[0] >= iWinLimit || g_iTeamScore[1] >= iWinLimit))
+	{
+		log_amx("StartVote: winlimit %d [%d/%d]", iWinLimit, g_iTeamScore[0], g_iTeamScore[1]);
+		StartVote(0);
+	}
+	
+	#if defined FUNCTION_RTV
+	if(g_bVoteFinished && g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1)
+	{
+		Intermission();
+		new szMapName[32]; get_pcvar_string(g_pCvars[NEXTMAP], szMapName, charsmax(szMapName));
+		client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, szMapName);
+	}
+	#endif
+}
 public Event_TeamScore()
 {
 	new team[2]; read_data(1, team, charsmax(team));
@@ -280,26 +387,13 @@ public Task_CheckTime()
 {
 	if(g_bVoteFinished) return PLUGIN_CONTINUE;
 	
-	new TimeLeft = get_timeleft();	
-	if(TimeLeft <= get_pcvar_num(g_pCvars[START_VOTE_BEFORE_END]) * 60)
+	new iTimeLeft = get_timeleft();
+	if(iTimeLeft <= get_pcvar_num(g_pCvars[START_VOTE_BEFORE_END]) * 60)
 	{
-		log_amx("StartVote: timeleft %d", TimeLeft);
+		log_amx("StartVote: timeleft %d", iTimeLeft);
 		StartVote(0);
-	}
+	}	
 	
-	new MaxRounds = get_pcvar_num(g_pCvars[MAXROUNDS]);
-	if(MaxRounds && (g_iTeamScore[0] + g_iTeamScore[1]) >= MaxRounds - 2)
-	{
-		log_amx("StartVote: maxrounds %d [%d]", MaxRounds, g_iTeamScore[0] + g_iTeamScore[1]);
-		StartVote(0);
-	}
-	
-	new WinLimit = get_pcvar_num(g_pCvars[WINLIMIT]) - 2;
-	if(WinLimit > 0 && (g_iTeamScore[0] >= WinLimit || g_iTeamScore[1] >= WinLimit))
-	{
-		log_amx("StartVote: winlimit %d [%d/%d]", WinLimit, g_iTeamScore[0], g_iTeamScore[1]);
-		StartVote(0);
-	}
 	return PLUGIN_CONTINUE;
 }
 public StartVote(id)
@@ -311,13 +405,13 @@ public StartVote(id)
 	ResetInfo();
 	
 	new Array:aMaps = ArrayCreate(MENU_INFO), CurrentSize = 0;
-	new eMenuInfo[MENU_INFO], eMapInfo[MAP_INFO], GlobalSize = ArraySize(g_aMaps);
-	new PlayersNum = get_players_num();
+	new eMenuInfo[MENU_INFO], eMapInfo[MAP_INFO], iGlobalSize = ArraySize(g_aMaps);
+	new iPlayersNum = GetPlayersNum();
 	
-	for(new i = 1; i < GlobalSize; i++)
+	for(new i = 0; i < iGlobalSize; i++)
 	{
 		ArrayGetArray(g_aMaps, i, eMapInfo);
-		if(eMapInfo[m_Min] <= PlayersNum <= eMapInfo[m_Max])
+		if(eMapInfo[m_Min] <= iPlayersNum <= eMapInfo[m_Max])
 		{
 			formatex(eMenuInfo[n_Name], charsmax(eMenuInfo[n_Name]), eMapInfo[m_Name]);
 			eMenuInfo[n_Index] = i; CurrentSize++;
@@ -328,30 +422,30 @@ public StartVote(id)
 	if(CurrentSize)
 	{
 		g_iMenuItemsCount = min(CurrentSize, SELECT_MAPS);
-		for(new RandomMap; Item < g_iMenuItemsCount; Item++)
+		for(new iRandomMap; Item < g_iMenuItemsCount; Item++)
 		{
-			RandomMap = random_num(0, ArraySize(aMaps) - 1);
-			ArrayGetArray(aMaps, RandomMap, eMenuInfo);
+			iRandomMap = random_num(0, ArraySize(aMaps) - 1);
+			ArrayGetArray(aMaps, iRandomMap, eMenuInfo);
 			
 			formatex(g_eMenuItems[Item][n_Name], charsmax(g_eMenuItems[][n_Name]), eMenuInfo[n_Name]);
 			g_eMenuItems[Item][n_Index] = eMenuInfo[n_Index];
 			
-			ArrayDeleteItem(aMaps, RandomMap);
+			ArrayDeleteItem(aMaps, iRandomMap);
 		}
 	}
 	
 	if(Item < SELECT_MAPS)
 	{
-		g_iMenuItemsCount = min(GlobalSize, SELECT_MAPS);
-		for(new RandomMap; Item < g_iMenuItemsCount; Item++)
+		g_iMenuItemsCount = min(iGlobalSize, SELECT_MAPS);
+		for(new iRandomMap; Item < g_iMenuItemsCount; Item++)
 		{
-			do	RandomMap = random_num(0, GlobalSize - 1);
-			while(is_map_in_menu(RandomMap));	
+			do	iRandomMap = random_num(0, iGlobalSize - 1);
+			while(is_map_in_menu(iRandomMap));	
 			
-			ArrayGetArray(g_aMaps, RandomMap, eMapInfo);
+			ArrayGetArray(g_aMaps, iRandomMap, eMapInfo);
 			
 			formatex(g_eMenuItems[Item][n_Name], charsmax(g_eMenuItems[][n_Name]), eMapInfo[n_Name]);
-			g_eMenuItems[Item][n_Index] = RandomMap;
+			g_eMenuItems[Item][n_Index] = iRandomMap;
 		}
 	}
 	
@@ -368,7 +462,7 @@ ResetInfo()
 	{
 		g_eMenuItems[i][n_Name] = "";
 		g_eMenuItems[i][n_Index] = -1;
-		g_eMenuItems[i][n_Votes] = 0;		
+		g_eMenuItems[i][n_Votes] = 0;
 	}
 	arrayset(g_bPlayerVoted, false, 33);
 }
@@ -390,21 +484,29 @@ public ShowTimer()
 	else
 	{
 		#if defined FUNCTION_SOUND
-		client_cmd(0, "spk Gman/Gman_Choose2");
+		SendAudio(0, "sound/Gman/Gman_Choose2.wav", PITCH_NORM);
 		#endif
 		ShowVoteMenu();
 		return;
 	}
-	new szSec[16]; get_ending(g_iTimer, "секунд", "секунда", "секунды", szSec, charsmax(szSec));
-	for(new i = 1; i <= 32; i++)
+	new szSec[16]; GetEnding(g_iTimer, "секунд", "секунда", "секунды", szSec, charsmax(szSec));
+	new iPlayers[32], pNum; get_players(iPlayers, pNum, "ch");
+	for(new id, i; i < pNum; i++)
 	{
-		if(!is_user_connected(i)) continue;
-		set_hudmessage(50, 255, 50, -1.0, is_user_alive(i) ? 0.9 : 0.3, 0, 0.0, 1.0, 0.0, 0.0, 1);
-		show_hudmessage(i, "До голосования осталось %d %s!", g_iTimer, szSec);
+		id = iPlayers[i];
+		set_hudmessage(50, 255, 50, -1.0, is_user_alive(id) ? 0.9 : 0.3, 0, 0.0, 1.0, 0.0, 0.0, 1);
+		show_hudmessage(id, "До голосования осталось %d %s!", g_iTimer, szSec);
 	}
 	
 	#if defined FUNCTION_SOUND
-	if(g_iTimer <= 10) client_cmd(0, "spk %s", g_szSound[g_iTimer]);
+	if(g_iTimer <= 10)
+	{
+		for(new id, i; i < pNum; i++)
+		{
+			id = iPlayers[i];
+			SendAudio(id, g_szSound[g_iTimer], PITCH_NORM);
+		}
+	}
 	#endif
 	
 	g_iTimer--;
@@ -443,54 +545,58 @@ public VoteMenu(id)
 	}
 	
 	static szMenu[512];
-	new Keys, Percent, i, Len;
+	new iKeys, iPercent, i, iLen;
 	
-	Len = formatex(szMenu[Len], charsmax(szMenu) - Len, "\y%s:^n^n", g_bPlayerVoted[id] ? "Результаты голосования" : "Выберите карту");
+	iLen = formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%s:^n^n", g_bPlayerVoted[id] ? "Результаты голосования" : "Выберите карту");
 	
 	for(i = 0; i < g_iMenuItemsCount; i++)
 	{		
-		Percent = 0;
+		iPercent = 0;
 		if(g_iTotalVotes)
 		{
-			Percent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
+			iPercent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
 		}
 		
 		if(!g_bPlayerVoted[id])
 		{
-			Len += formatex(szMenu[Len], charsmax(szMenu) - Len, "\r%d.\w %s\d[\r%d%%\d]^n", i + 1, g_eMenuItems[i][n_Name], Percent);	
-			Keys |= (1 << i);
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d.\w %s\d[\r%d%%\d]^n", i + 1, g_eMenuItems[i][n_Name], iPercent);	
+			iKeys |= (1 << i);
 		}
 		else
 		{
-			Len += formatex(szMenu[Len], charsmax(szMenu) - Len, "\d%s[\r%d%%\d]^n", g_eMenuItems[i][n_Name], Percent);
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d%s[\r%d%%\d]^n", g_eMenuItems[i][n_Name], iPercent);
 		}
 	}
 	
+	#if defined FUNCTION_RTV
+	if(!g_bRockVote && g_iExtendedMax < get_pcvar_num(g_pCvars[EXENDED_MAX]))
+	#else
 	if(g_iExtendedMax < get_pcvar_num(g_pCvars[EXENDED_MAX]))
+	#endif
 	{
-		Percent = 0;
+		iPercent = 0;
 		if(g_iTotalVotes)
 		{
-			Percent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
+			iPercent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
 		}
 		
 		if(!g_bPlayerVoted[id])
 		{
-			Len += formatex(szMenu[Len], charsmax(szMenu) - Len, "^n\r%d.\w %s\d[\r%d%%\d]\y[Продлить]^n", i + 1, g_szCurrentMap, Percent);	
-			Keys |= (1 << i);		
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r%d.\w %s\d[\r%d%%\d]\y[Продлить]^n", i + 1, g_szCurrentMap, iPercent);	
+			iKeys |= (1 << i);
 		}
 		else
 		{
-			Len += formatex(szMenu[Len], charsmax(szMenu) - Len, "^n\d%s[\r%d%%\d]\y[Продлить]^n", g_szCurrentMap, Percent);
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\d%s[\r%d%%\d]\y[Продлить]^n", g_szCurrentMap, iPercent);
 		}
 	}
 	
-	new szSec[16]; get_ending(g_iTimer, "секунд", "секунда", "секунды", szSec, charsmax(szSec));
-	Len += formatex(szMenu[Len], charsmax(szMenu) - Len, "^n\dОсталось \r%d\d %s", g_iTimer, szSec);
+	new szSec[16]; GetEnding(g_iTimer, "секунд", "секунда", "секунды", szSec, charsmax(szSec));
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\dОсталось \r%d\d %s", g_iTimer, szSec);
 	
-	if(!Keys) Keys |= (1 << 9);
+	if(!iKeys) iKeys |= (1 << 9);
 	
-	show_menu(id, Keys, szMenu, -1, "VoteMenu");
+	show_menu(id, iKeys, szMenu, -1, "VoteMenu");
 	
 	return PLUGIN_HANDLED;
 }
@@ -535,45 +641,55 @@ FinishVote()
 	g_bVoteStarted = false;
 	g_bVoteFinished = true;
 		
-	new MaxVote = 0, Random;
+	new iMaxVote = 0, iRandom;
 	for(new i = 1; i < g_iMenuItemsCount + 1; i++)
 	{
-		Random = random_num(0, 1);
-		switch(Random)
+		iRandom = random_num(0, 1);
+		switch(iRandom)
 		{
-			case 0: if(g_eMenuItems[MaxVote][n_Votes] < g_eMenuItems[i][n_Votes]) MaxVote = i;
-			case 1: if(g_eMenuItems[MaxVote][n_Votes] <= g_eMenuItems[i][n_Votes]) MaxVote = i;
+			case 0: if(g_eMenuItems[iMaxVote][n_Votes] < g_eMenuItems[i][n_Votes]) iMaxVote = i;
+			case 1: if(g_eMenuItems[iMaxVote][n_Votes] <= g_eMenuItems[i][n_Votes]) iMaxVote = i;
 		}
-	}
+	}	
 	
-	
-	
-	if(!g_iTotalVotes || (MaxVote != g_iMenuItemsCount))
+	if(!g_iTotalVotes || (iMaxVote != g_iMenuItemsCount))
 	{
 		if(g_iTotalVotes)
 		{
-			client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, g_eMenuItems[MaxVote][n_Name]);
+			client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][n_Name]);
 		}
 		else
 		{
-			MaxVote = random_num(0, g_iMenuItemsCount - 1);
-			client_print_color(0, print_team_default, "%s^1 Никто не голосовал. Следуйщей будет^3 %s^1.", PREFIX, g_eMenuItems[MaxVote][n_Name]);
+			iMaxVote = random_num(0, g_iMenuItemsCount - 1);
+			client_print_color(0, print_team_default, "%s^1 Никто не голосовал. Следуйщей будет^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][n_Name]);
 		}
-		set_pcvar_string(g_pCvars[NEXTMAP], g_eMenuItems[MaxVote][n_Name]);
+		set_pcvar_string(g_pCvars[NEXTMAP], g_eMenuItems[iMaxVote][n_Name]);
+		
+		#if defined FUNCTION_RTV
+		if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0)
+		{
+			client_print_color(0, print_team_default, "%s^1 Карта сменится через^3 5^1 секунд.", PREFIX);
+			Intermission();
+		}
+		else if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1)
+		{
+			client_print_color(0, print_team_default, "%s^1 Карта сменится в следующем раунде.", PREFIX);
+		}
+		#endif
 	}
 	else
 	{
 		g_bVoteFinished = false;
 		g_iExtendedMax++;
 		new iMin = get_pcvar_num(g_pCvars[EXENDED_TIME]);
-		new szMin[16]; get_ending(iMin, "минут", "минута", "минуты", szMin, charsmax(szMin));
+		new szMin[16]; GetEnding(iMin, "минут", "минута", "минуты", szMin, charsmax(szMin));
 		
 		client_print_color(0, print_team_default, "^4%s^1 Текущая карта продлена на^3 %d^1 %s.", PREFIX, iMin, szMin);
 		set_pcvar_float(g_pCvars[TIMELIMIT], get_pcvar_float(g_pCvars[TIMELIMIT]) + float(iMin));
 	}
 }
 ///**************************///
-stock get_players_num()
+stock GetPlayersNum()
 {
 	new count = 0;
 	for(new i = 1; i < 33; i++)
@@ -582,7 +698,7 @@ stock get_players_num()
 	}
 	return count;
 }
-stock valid_map(map[])
+stock ValidMap(map[])
 {
 	if(is_map_valid(map)) return true;
 	
@@ -592,7 +708,7 @@ stock valid_map(map[])
 	
 	if(equali(map[len], ".bsp"))
 	{
-		map[len] = '^0';		
+		map[len] = '^0';
 		if(is_map_valid(map)) return true;
 	}
 	
@@ -623,10 +739,42 @@ stock is_map_in_menu(index)
 	}
 	return false;
 }
-stock get_ending(num, const a[], const b[], const c[], output[], lenght)
+stock GetEnding(num, const a[], const b[], const c[], output[], lenght)
 {
 	new num100 = num % 100, num10 = num % 10;
 	if(num100 >=5 && num100 <= 20 || num10 == 0 || num10 >= 5 && num10 <= 9) format(output, lenght, "%s", a);
 	else if(num10 == 1) format(output, lenght, "%s", b);
 	else if(num10 >= 2 && num10 <= 4) format(output, lenght, "%s", c);
+}
+stock SendAudio(id, audio[], pitch)
+{
+	static iMsgSendAudio;
+	if(!iMsgSendAudio) iMsgSendAudio = get_user_msgid("SendAudio");
+	
+	if(id)
+	{
+		message_begin(MSG_ONE_UNRELIABLE, iMsgSendAudio, _, id);
+		write_byte(id);
+		write_string(audio);
+		write_short(pitch);
+		message_end();
+	}
+	else
+	{
+		new iPlayers[32], pNum; get_players(iPlayers, pNum, "ch");
+		for(new id, i; i < pNum; i++)
+		{
+			id = iPlayers[i];
+			message_begin(MSG_ONE_UNRELIABLE, iMsgSendAudio, _, id);
+			write_byte(id);
+			write_string(audio);
+			write_short(pitch);
+			message_end();
+		}
+	}
+}
+stock Intermission()
+{
+	emessage_begin(MSG_ALL, SVC_INTERMISSION);
+	emessage_end();
 }
