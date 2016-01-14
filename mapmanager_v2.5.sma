@@ -60,6 +60,7 @@ new Array: g_aMaps;
 
 enum _:CVARS
 {
+	CHANGE_TYPE,
 	START_VOTE_BEFORE_END,
 	SHOW_RESULT_TYPE,
 	SHOW_SELECTS,
@@ -110,6 +111,7 @@ new g_bRockVote;
 #if defined FUNCTION_NOMINATION
 new Array:g_aNominatedMaps;
 new g_iNominatedMaps[33];
+new g_iPage[33];
 new g_szMapPrefixes[][] = {"deathrun_", "de_"};
 #endif
  
@@ -119,8 +121,9 @@ public plugin_init()
 	
 	register_cvar("mm_version", VERSION, FCVAR_SERVER | FCVAR_SPONLY);
 	
+	g_pCvars[CHANGE_TYPE] = register_cvar("mm_change_type", "2");//0 - after end vote, 1 - in round end, 2 - after end map
 	g_pCvars[START_VOTE_BEFORE_END] = register_cvar("mm_start_vote_before_end", "2");//minutes
-	g_pCvars[SHOW_RESULT_TYPE] = register_cvar("mm_show_result_type", "1");//0 - disable, 1 - menu
+	g_pCvars[SHOW_RESULT_TYPE] = register_cvar("mm_show_result_type", "1");//0 - disable, 1 - menu, 2 - hud
 	g_pCvars[SHOW_SELECTS] = register_cvar("mm_show_selects", "1");//0 - disable, 1 - all
 	
 	g_pCvars[EXENDED_MAX] = register_cvar("mm_extended_map_max", "3");
@@ -167,9 +170,15 @@ public plugin_init()
 	#if defined FUNCTION_NOMINATION
 	register_clcmd("say", "Command_Say");
 	register_clcmd("say_team", "Command_Say");
+	register_clcmd("say maps", "Command_MapsList");
+	register_clcmd("say /maps", "Command_MapsList");
 	#endif
 	
 	register_menucmd(register_menuid("VoteMenu"), 1023, "VoteMenu_Handler");
+	
+	#if defined FUNCTION_NOMINATION
+	register_menucmd(register_menuid("MapsListMenu"), 1023, "MapsListMenu_Handler");
+	#endif
 	
 	set_task(10.0, "Task_CheckTime", TASK_CHECKTIME, .flags = "b");
 }
@@ -344,6 +353,92 @@ NominateMap(id, map[32], map_index)
 	
 	return PLUGIN_CONTINUE;
 }
+public Command_MapsList(id)
+{
+	Show_MapsListMenu(id, g_iPage[id] = 0);
+}
+public Show_MapsListMenu(id, iPage)
+{
+	if(iPage < 0) return PLUGIN_HANDLED;
+	
+	new iMax = ArraySize(g_aMaps);
+	new i = min(iPage * 8, iMax);
+	new iStart = i - (i % 8);
+	new iEnd = min(iStart + 8, iMax);
+	
+	iPage = iStart / 8;
+	g_iPage[id] = iPage;
+	
+	static szMenu[512],	iLen, eMapInfo[MAP_INFO]; iLen = 0;
+	
+	iLen = formatex(szMenu, charsmax(szMenu), "\yСписок карт \w[%d/%d]:^n", iPage + 1, ((iMax - 1) / 8) + 1);
+	
+	new Keys, Item, iNominated;
+
+	for (i = iStart; i < iEnd; i++)
+	{
+		ArrayGetArray(g_aMaps, i, eMapInfo);
+	
+		iNominated = is_map_nominated(i);
+		
+		if(iNominated)
+		{
+			new eNomInfo[NOMINATEDMAP_INFO]; ArrayGetArray(g_aNominatedMaps, iNominated - 1, eNomInfo);
+			if(id == eNomInfo[n_Player])
+			{
+				Keys |= (1 << Item);
+				iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r%d.\w %s[\y*\w]", ++Item, eMapInfo[m_MapName]);
+				
+			}
+			else
+			{
+				iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r%d.\d %s[\y*\d]", ++Item, eMapInfo[m_MapName]);
+			}
+		}
+		else
+		{
+			Keys |= (1 << Item);
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r%d.\w %s", ++Item, eMapInfo[m_MapName]);
+		}
+	}
+	while(Item <= 8)
+	{
+		Item++;
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n");
+	}
+	if (iEnd < iMax)
+	{
+		Keys |= (1 << 8)|(1 << 9);		
+		formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r9.\w Вперед^n\r0.\w %s", iPage ? "Назад" : "Выход");
+	}
+	else
+	{
+		Keys |= (1 << 9);
+		formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n^n\r0.\w %s", iPage ? "Назад" : "Выход");
+	}
+	show_menu(id, Keys, szMenu, -1, "MapsListMenu");
+	return PLUGIN_HANDLED;
+}
+public MapsListMenu_Handler(id, key)
+{
+	switch (key)
+	{
+		case 8: Show_MapsListMenu(id, ++g_iPage[id]);
+		case 9: Show_MapsListMenu(id, --g_iPage[id]);
+		default:
+		{
+			new map_index = key + g_iPage[id] * 8;
+			new eMapInfo[MAP_INFO]; ArrayGetArray(g_aMaps, map_index, eMapInfo);
+			new szMapName[32]; formatex(szMapName, charsmax(szMapName), eMapInfo[m_MapName]);
+			NominateMap(id, szMapName, map_index);
+			if(g_iNominatedMaps[id] < NOMINATED_MAPS_PER_PLAYER)
+			{
+				Show_MapsListMenu(id, g_iPage[id]);
+			}
+		}
+	}
+	return PLUGIN_HANDLED;
+}
 #endif
 public client_disconnect(id)
 {
@@ -480,13 +575,16 @@ public Event_NewRound()
 	}
 	
 	#if defined FUNCTION_RTV
-	if(g_bVoteFinished && g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1)
+	if(g_bVoteFinished && (g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1 || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1))
+	#else
+	if(g_bVoteFinished && get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1)
+	#endif
 	{
 		Intermission();
 		new szMapName[32]; get_pcvar_string(g_pCvars[NEXTMAP], szMapName, charsmax(szMapName));
 		client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, szMapName);
 	}
-	#endif
+	
 }
 public Event_TeamScore()
 {
@@ -731,7 +829,20 @@ public VoteMenu(id)
 	
 	if(!iKeys) iKeys |= (1 << 9);
 	
-	show_menu(id, iKeys, szMenu, -1, "VoteMenu");
+	if(g_bPlayerVoted[id] && get_pcvar_num(g_pCvars[SHOW_RESULT_TYPE]) == 2)
+	{
+		while(replace(szMenu, charsmax(szMenu), "\r", "")){}
+		while(replace(szMenu, charsmax(szMenu), "\d", "")){}
+		while(replace(szMenu, charsmax(szMenu), "\w", "")){}
+		while(replace(szMenu, charsmax(szMenu), "\y", "")){}
+		
+		set_hudmessage(0, 55, 255, 0.02, -1.0, 0, 6.0, 1.0, 0.1, 0.2, 4);
+		show_hudmessage(id, "%s", szMenu);
+	}
+	else
+	{
+		show_menu(id, iKeys, szMenu, -1, "VoteMenu");
+	}
 	
 	return PLUGIN_HANDLED;
 }
@@ -801,16 +912,23 @@ FinishVote()
 		set_pcvar_string(g_pCvars[NEXTMAP], g_eMenuItems[iMaxVote][v_MapName]);
 		
 		#if defined FUNCTION_RTV
-		if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0)
+		if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0 || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 0)
+		#else
+		if(get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 0)
+		#endif
 		{
 			client_print_color(0, print_team_default, "%s^1 Карта сменится через^3 5^1 секунд.", PREFIX);
 			Intermission();
 		}
-		else if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1)
+		#if defined FUNCTION_RTV
+		else if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 1 || get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1)
+		#else
+		if(get_pcvar_num(g_pCvars[CHANGE_TYPE]) == 1)
+		#endif
 		{
 			client_print_color(0, print_team_default, "%s^1 Карта сменится в следующем раунде.", PREFIX);
 		}
-		#endif
+		
 	}
 	else
 	{
