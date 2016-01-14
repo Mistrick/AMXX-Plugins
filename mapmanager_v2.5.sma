@@ -13,14 +13,17 @@
 ///******** Settings ********///
 
 #define FUNCTION_NEXTMAP //replace default nextmap
-//#define FUNCTION_BLOCK_MAPS
 #define FUNCTION_RTV
-//#define FUNCTION_NOMINATION
+#define FUNCTION_NOMINATION
+//#define FUNCTION_BLOCK_MAPS
 #define FUNCTION_SOUND
 
 #define SELECT_MAPS 5
 #define PRE_START_TIME 5
 #define VOTE_TIME 10
+
+#define NOMINATED_MAPS_IN_MENU 3
+#define NOMINATED_MAPS_PER_PLAYER 3
 
 new const PREFIX[] = "^4[MapManager]";
 
@@ -36,15 +39,21 @@ enum (+=100)
 
 enum _:MAP_INFO
 {
-	m_Name[32],
+	m_MapName[32],
 	m_Min,
 	m_Max
 };
-enum _:MENU_INFO
+enum _:VOTEMENU_INFO
 {
-	n_Name[32],
-	n_Index,
-	n_Votes
+	v_MapName[32],
+	v_MapIndex,
+	v_Votes
+};
+enum _:NOMINATEDMAP_INFO
+{
+	n_MapName[32],
+	n_Player,
+	n_MapIndex
 };
 
 new Array: g_aMaps;
@@ -56,10 +65,12 @@ enum _:CVARS
 	SHOW_SELECTS,
 	EXENDED_MAX,
 	EXENDED_TIME,
+#if defined FUNCTION_RTV
 	ROCK_MODE,
 	ROCK_PERCENT,
 	ROCK_PLAYERS,
 	ROCK_CHANGE_TYPE,
+#endif
 	MAXROUNDS,
 	WINLIMIT,
 	TIMELIMIT,
@@ -75,7 +86,7 @@ new g_szCurrentMap[32];
 new g_bVoteStarted;
 new g_bVoteFinished;
 
-new g_eMenuItems[SELECT_MAPS + 1][MENU_INFO];
+new g_eMenuItems[SELECT_MAPS + 1][VOTEMENU_INFO];
 new g_iMenuItemsCount;
 new g_iTotalVotes;
 new g_iTimer;
@@ -94,6 +105,12 @@ new const g_szSound[][] =
 new g_bRockVoted[33];
 new g_iRockVotes;
 new g_bRockVote;
+#endif
+
+#if defined FUNCTION_NOMINATION
+new Array:g_aNominatedMaps;
+new g_iNominatedMaps[33];
+new g_szMapPrefixes[][] = {"deathrun_", "de_"};
 #endif
  
 public plugin_init()
@@ -147,20 +164,25 @@ public plugin_init()
 	register_clcmd("say /rtv", "Command_RockTheVote");
 	#endif
 	
+	#if defined FUNCTION_NOMINATION
+	register_clcmd("say", "Command_Say");
+	register_clcmd("say_team", "Command_Say");
+	#endif
+	
 	register_menucmd(register_menuid("VoteMenu"), 1023, "VoteMenu_Handler");
 	
 	set_task(10.0, "Task_CheckTime", TASK_CHECKTIME, .flags = "b");
 }
 public Commang_Debug(id)
 {
-	console_print(id, "^nLoaded maps:");
-	
+	console_print(id, "^nLoaded maps:");	
 	new eMapInfo[MAP_INFO], iSize = ArraySize(g_aMaps);
 	for(new i; i < iSize; i++)
 	{
 		ArrayGetArray(g_aMaps, i, eMapInfo);
-		console_print(id, "%3d %32s ^t%d^t%d", i, eMapInfo[m_Name], eMapInfo[m_Min], eMapInfo[m_Max]);
+		console_print(id, "%3d %32s ^t%d^t%d", i, eMapInfo[m_MapName], eMapInfo[m_Min], eMapInfo[m_Max]);
 	}
+	return PLUGIN_HANDLED;
 }
 public Command_StartVote(id, flag)
 {
@@ -187,9 +209,8 @@ public Command_StopVote(id, flag)
 		remove_task(TASK_TIMER);
 		
 		for(new i = 1; i <= 32; i++)
-		{
 			remove_task(TASK_VOTEMENU + i);
-		}
+		
 		show_menu(0, 0, "^n", 1);
 		new szName[32];
 		
@@ -258,6 +279,91 @@ public Command_RockTheVote(id)
 }
 #endif
 
+#if defined FUNCTION_NOMINATION
+public Command_Say(id)
+{
+	if(g_bVoteStarted) return;
+	
+	new szText[32]; read_args(szText, charsmax(szText));
+	remove_quotes(szText); trim(szText); strtolower(szText);
+	
+	new map_index = is_map_in_array(szText);
+	
+	if(map_index)
+	{
+		NominateMap(id, szText, map_index - 1);
+	}
+	else
+	{
+		for(new i; i < sizeof(g_szMapPrefixes); i++)
+		{
+			new szFormat[32]; formatex(szFormat, charsmax(szFormat), "%s%s", g_szMapPrefixes[i], szText);
+			map_index = is_map_in_array(szFormat);
+			if(map_index)
+			{
+				NominateMap(id, szFormat, map_index - 1);
+			}
+		}
+	}
+}
+NominateMap(id, map[32], map_index)
+{
+	new eNomInfo[NOMINATEDMAP_INFO];
+	new szName[32];	get_user_name(id, szName, charsmax(szName));
+	
+	new nominate_index = is_map_nominated(map_index);
+	if(nominate_index)
+	{
+		ArrayGetArray(g_aNominatedMaps, nominate_index - 1, eNomInfo);
+		if(id == eNomInfo[n_Player])
+		{
+			g_iNominatedMaps[id]--;
+			ArrayDeleteItem(g_aNominatedMaps, nominate_index - 1);
+			
+			client_print_color(0, id, "%s^3 %s^1 убрал номинацию с карты^3 %s^1.", PREFIX, szName, map);
+			return PLUGIN_CONTINUE;
+		}
+		client_print_color(id, print_team_default, "%s^1 Эта карта уже номинирована.", PREFIX);
+		return PLUGIN_CONTINUE;
+	}
+	
+	if(g_iNominatedMaps[id] >= NOMINATED_MAPS_PER_PLAYER)
+	{
+		client_print_color(id, print_team_default, "%s^1 Вы не можете больше номинировать карты.", PREFIX);
+		return PLUGIN_CONTINUE;
+	}
+	
+	eNomInfo[n_MapName] = map;
+	eNomInfo[n_Player] = id;
+	eNomInfo[n_MapIndex] = map_index;
+	ArrayPushArray(g_aNominatedMaps, eNomInfo);
+	
+	g_iNominatedMaps[id]++;
+	
+	client_print_color(0, id, "%s^3 %s^1 номинировал на голосование^3 %s^1.", PREFIX, szName, map);
+	
+	return PLUGIN_CONTINUE;
+}
+#endif
+public client_disconnect(id)
+{
+	remove_task(id + TASK_VOTEMENU);
+	
+	#if defined FUNCTION_RTV
+	if(g_bRockVoted[id])
+	{
+		g_bRockVoted[id] = false;
+		g_iRockVotes--;
+	}
+	#endif
+	
+	#if defined FUNCTION_NOMINATION
+	if(g_iNominatedMaps[id])
+	{
+		ClearNominatedMaps(id);
+	}
+	#endif
+}
 public plugin_end()
 {
 	if(g_iExtendedMax)
@@ -269,7 +375,9 @@ public plugin_cfg()
 {
 	g_aMaps = ArrayCreate(MAP_INFO);
 	
-	LoadMapsFromFile();
+	#if defined FUNCTION_NOMINATION
+	g_aNominatedMaps = ArrayCreate(NOMINATEDMAP_INFO);
+	#endif
 	
 	if( is_plugin_loaded("Nextmap Chooser") > -1 )
 	{
@@ -284,6 +392,8 @@ public plugin_cfg()
 		log_amx("MapManager: nextmap.amxx has been stopped.");
 	}	
 	#endif
+	
+	LoadMapsFromFile();
 }
 LoadMapsFromFile()
 {
@@ -311,7 +421,7 @@ LoadMapsFromFile()
 				if(is_map_blocked(szMap)) continue;
 				#endif
 				
-				eMapInfo[m_Name] = szMap;
+				eMapInfo[m_MapName] = szMap;
 				eMapInfo[m_Min] = str_to_num(szMin);
 				eMapInfo[m_Max] = str_to_num(szMax) == 0 ? 32 : str_to_num(szMax);
 				
@@ -328,9 +438,9 @@ LoadMapsFromFile()
 			}
 			
 			#if defined FUNCTION_NEXTMAP
-			new RandomMap = random_num(0, iSize - 1);
-			ArrayGetArray(g_aMaps, RandomMap, eMapInfo);
-			set_pcvar_string(g_pCvars[NEXTMAP], eMapInfo[m_Name]);
+			new iRandomMap = random_num(0, iSize - 1);
+			ArrayGetArray(g_aMaps, iRandomMap, eMapInfo);
+			set_pcvar_string(g_pCvars[NEXTMAP], eMapInfo[m_MapName]);
 			#endif
 		}		
 	}
@@ -404,8 +514,8 @@ public StartVote(id)
 	
 	ResetInfo();
 	
-	new Array:aMaps = ArrayCreate(MENU_INFO), CurrentSize = 0;
-	new eMenuInfo[MENU_INFO], eMapInfo[MAP_INFO], iGlobalSize = ArraySize(g_aMaps);
+	new Array:aMaps = ArrayCreate(VOTEMENU_INFO), iCurrentSize = 0;
+	new eMenuInfo[VOTEMENU_INFO], eMapInfo[MAP_INFO], iGlobalSize = ArraySize(g_aMaps);
 	new iPlayersNum = GetPlayersNum();
 	
 	for(new i = 0; i < iGlobalSize; i++)
@@ -413,22 +523,47 @@ public StartVote(id)
 		ArrayGetArray(g_aMaps, i, eMapInfo);
 		if(eMapInfo[m_Min] <= iPlayersNum <= eMapInfo[m_Max])
 		{
-			formatex(eMenuInfo[n_Name], charsmax(eMenuInfo[n_Name]), eMapInfo[m_Name]);
-			eMenuInfo[n_Index] = i; CurrentSize++;
+			formatex(eMenuInfo[v_MapName], charsmax(eMenuInfo[v_MapName]), eMapInfo[m_MapName]);
+			eMenuInfo[v_MapIndex] = i; iCurrentSize++;
 			ArrayPushArray(aMaps, eMenuInfo);
 		}
 	}
 	new Item = 0;
-	if(CurrentSize)
+	
+	#if defined FUNCTION_NOMINATION
+	new eNomInfo[NOMINATEDMAP_INFO];
+	new iNomSize = ArraySize(g_aNominatedMaps);
+	
+	g_iMenuItemsCount = min(min(iNomSize, NOMINATED_MAPS_IN_MENU), SELECT_MAPS);
+	
+	for(new iRandomMap; Item < g_iMenuItemsCount; Item++)
 	{
-		g_iMenuItemsCount = min(CurrentSize, SELECT_MAPS);
+		iRandomMap = random_num(0, ArraySize(g_aNominatedMaps) - 1);
+		ArrayGetArray(g_aNominatedMaps, iRandomMap, eNomInfo);
+		
+		formatex(g_eMenuItems[Item][v_MapName], charsmax(g_eMenuItems[][v_MapName]), eNomInfo[n_MapName]);
+		g_eMenuItems[Item][v_MapIndex] = eNomInfo[n_MapIndex];
+		
+		ArrayDeleteItem(g_aNominatedMaps, iRandomMap);
+		
+		new priority_index = is_map_in_priority(aMaps, eNomInfo[n_MapIndex]);
+		if(priority_index)
+		{
+			ArrayDeleteItem(aMaps, priority_index - 1);
+		}
+	}	
+	#endif
+	
+	if(iCurrentSize && Item < SELECT_MAPS)
+	{
+		g_iMenuItemsCount = min(iCurrentSize, SELECT_MAPS);
 		for(new iRandomMap; Item < g_iMenuItemsCount; Item++)
 		{
 			iRandomMap = random_num(0, ArraySize(aMaps) - 1);
 			ArrayGetArray(aMaps, iRandomMap, eMenuInfo);
 			
-			formatex(g_eMenuItems[Item][n_Name], charsmax(g_eMenuItems[][n_Name]), eMenuInfo[n_Name]);
-			g_eMenuItems[Item][n_Index] = eMenuInfo[n_Index];
+			formatex(g_eMenuItems[Item][v_MapName], charsmax(g_eMenuItems[][v_MapName]), eMenuInfo[v_MapName]);
+			g_eMenuItems[Item][v_MapIndex] = eMenuInfo[v_MapIndex];
 			
 			ArrayDeleteItem(aMaps, iRandomMap);
 		}
@@ -444,8 +579,8 @@ public StartVote(id)
 			
 			ArrayGetArray(g_aMaps, iRandomMap, eMapInfo);
 			
-			formatex(g_eMenuItems[Item][n_Name], charsmax(g_eMenuItems[][n_Name]), eMapInfo[n_Name]);
-			g_eMenuItems[Item][n_Index] = iRandomMap;
+			formatex(g_eMenuItems[Item][v_MapName], charsmax(g_eMenuItems[][v_MapName]), eMapInfo[v_MapName]);
+			g_eMenuItems[Item][v_MapIndex] = iRandomMap;
 		}
 	}
 	
@@ -460,9 +595,9 @@ ResetInfo()
 	g_iTotalVotes = 0;
 	for(new i; i < sizeof(g_eMenuItems); i++)
 	{
-		g_eMenuItems[i][n_Name] = "";
-		g_eMenuItems[i][n_Index] = -1;
-		g_eMenuItems[i][n_Votes] = 0;
+		g_eMenuItems[i][v_MapName] = "";
+		g_eMenuItems[i][v_MapIndex] = -1;
+		g_eMenuItems[i][v_Votes] = 0;
 	}
 	arrayset(g_bPlayerVoted, false, 33);
 }
@@ -554,17 +689,17 @@ public VoteMenu(id)
 		iPercent = 0;
 		if(g_iTotalVotes)
 		{
-			iPercent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
+			iPercent = floatround(g_eMenuItems[i][v_Votes] * 100.0 / g_iTotalVotes);
 		}
 		
 		if(!g_bPlayerVoted[id])
 		{
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d.\w %s\d[\r%d%%\d]^n", i + 1, g_eMenuItems[i][n_Name], iPercent);	
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d.\w %s\d[\r%d%%\d]^n", i + 1, g_eMenuItems[i][v_MapName], iPercent);	
 			iKeys |= (1 << i);
 		}
 		else
 		{
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d%s[\r%d%%\d]^n", g_eMenuItems[i][n_Name], iPercent);
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d%s[\r%d%%\d]^n", g_eMenuItems[i][v_MapName], iPercent);
 		}
 	}
 	
@@ -577,7 +712,7 @@ public VoteMenu(id)
 		iPercent = 0;
 		if(g_iTotalVotes)
 		{
-			iPercent = floatround(g_eMenuItems[i][n_Votes] * 100.0 / g_iTotalVotes);
+			iPercent = floatround(g_eMenuItems[i][v_Votes] * 100.0 / g_iTotalVotes);
 		}
 		
 		if(!g_bPlayerVoted[id])
@@ -608,7 +743,7 @@ public VoteMenu_Handler(id, key)
 		return PLUGIN_HANDLED;
 	}
 	
-	g_eMenuItems[key][n_Votes]++;
+	g_eMenuItems[key][v_Votes]++;
 	g_iTotalVotes++;
 	g_bPlayerVoted[id] = true;
 	
@@ -621,7 +756,7 @@ public VoteMenu_Handler(id, key)
 		}
 		else
 		{
-			client_print_color(0, id, "^4%s^3 %s^1 выбрал^3 %s^1.", PREFIX, szName, g_eMenuItems[key][n_Name]);
+			client_print_color(0, id, "^4%s^3 %s^1 выбрал^3 %s^1.", PREFIX, szName, g_eMenuItems[key][v_MapName]);
 		}
 	}
 	
@@ -647,8 +782,8 @@ FinishVote()
 		iRandom = random_num(0, 1);
 		switch(iRandom)
 		{
-			case 0: if(g_eMenuItems[iMaxVote][n_Votes] < g_eMenuItems[i][n_Votes]) iMaxVote = i;
-			case 1: if(g_eMenuItems[iMaxVote][n_Votes] <= g_eMenuItems[i][n_Votes]) iMaxVote = i;
+			case 0: if(g_eMenuItems[iMaxVote][v_Votes] < g_eMenuItems[i][v_Votes]) iMaxVote = i;
+			case 1: if(g_eMenuItems[iMaxVote][v_Votes] <= g_eMenuItems[i][v_Votes]) iMaxVote = i;
 		}
 	}	
 	
@@ -656,14 +791,14 @@ FinishVote()
 	{
 		if(g_iTotalVotes)
 		{
-			client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][n_Name]);
+			client_print_color(0, print_team_default, "%s^1 Следующая карта:^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][v_MapName]);
 		}
 		else
 		{
 			iMaxVote = random_num(0, g_iMenuItemsCount - 1);
-			client_print_color(0, print_team_default, "%s^1 Никто не голосовал. Следуйщей будет^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][n_Name]);
+			client_print_color(0, print_team_default, "%s^1 Никто не голосовал. Следуйщей будет^3 %s^1.", PREFIX, g_eMenuItems[iMaxVote][v_MapName]);
 		}
-		set_pcvar_string(g_pCvars[NEXTMAP], g_eMenuItems[iMaxVote][n_Name]);
+		set_pcvar_string(g_pCvars[NEXTMAP], g_eMenuItems[iMaxVote][v_MapName]);
 		
 		#if defined FUNCTION_RTV
 		if(g_bRockVote && get_pcvar_num(g_pCvars[ROCK_CHANGE_TYPE]) == 0)
@@ -716,16 +851,16 @@ stock ValidMap(map[])
 }
 stock is_map_in_array(map[])
 {
-	new eMapInfo[MAP_INFO], size = ArraySize(g_aMaps);
-	for(new i; i < size; i++)
+	new eMapInfo[MAP_INFO], iSize = ArraySize(g_aMaps);
+	for(new i; i < iSize; i++)
 	{
 		ArrayGetArray(g_aMaps, i, eMapInfo);
-		if(equali(map, eMapInfo[m_Name]))
+		if(equali(map, eMapInfo[m_MapName]))
 		{
-			return true;
+			return i + 1;
 		}
 	}
-	return false;
+	return 0;
 }
 stock is_map_blocked(map[])
 {
@@ -735,10 +870,51 @@ stock is_map_in_menu(index)
 {
 	for(new i; i < sizeof(g_eMenuItems); i++)
 	{
-		if(g_eMenuItems[i][n_Index] == index) return true;
+		if(g_eMenuItems[i][v_MapIndex] == index) return true;
 	}
 	return false;
 }
+#if defined FUNCTION_NOMINATION
+is_map_nominated(map_index)
+{
+	new eNomInfo[NOMINATEDMAP_INFO], iSize = ArraySize(g_aNominatedMaps);
+	for(new i; i < iSize; i++)
+	{
+		ArrayGetArray(g_aNominatedMaps, i, eNomInfo);
+		if(map_index == eNomInfo[n_MapIndex])
+		{
+			return i + 1;
+		}
+	}
+	return 0;
+}
+is_map_in_priority(Array:array, map_index)
+{
+	new ePriorityInfo[VOTEMENU_INFO], iSize = ArraySize(array);
+	for(new i; i < iSize; i++)
+	{
+		ArrayGetArray(array, i, ePriorityInfo);
+		if(map_index == ePriorityInfo[v_MapIndex])
+		{
+			return i + 1;
+		}
+	}
+	return 0;
+}
+ClearNominatedMaps(id)
+{
+	new eNomInfo[NOMINATEDMAP_INFO];
+	for(new i = 0; i < ArraySize(g_aNominatedMaps); i++)
+	{
+		ArrayGetArray(g_aNominatedMaps, i, eNomInfo);
+		if(id == eNomInfo[n_Player])
+		{
+			ArrayDeleteItem(g_aNominatedMaps, i--);
+			if(!--g_iNominatedMaps[id]) break;
+		}
+	}
+}
+#endif
 stock GetEnding(num, const a[], const b[], const c[], output[], lenght)
 {
 	new num100 = num % 100, num10 = num % 10;
