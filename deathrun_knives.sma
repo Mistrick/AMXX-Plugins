@@ -4,10 +4,12 @@
 #include <hamsandwich>
 
 #define PLUGIN "Deathrun: Knives"
-#define VERSION "0.4"
+#define VERSION "0.4.1"
 #define AUTHOR "Mistrick"
 
 #pragma semicolon 1
+
+#define IsPlayer(%1) (%1 && %1 <= 32)
 
 const XO_CBASEPLAYERWEAPON = 4;
 const XO_CBASEPLAYER = 5;
@@ -348,9 +350,10 @@ public Ham_Knife_SecondaryAttack_Post(weapon)
 }
 public Ham_TakeDamage_Pre(victim, idinflictor, attacker, Float:damage, damagebits)
 {
-	if(attacker && attacker <= 32 && victim != attacker)
+	if(IsPlayer(attacker) && victim != attacker && !(damagebits & DMG_GRENADE))
 	{
-		if(fm_cs_get_current_weapon_ent(attacker) == CSW_KNIFE)
+		new weapon = fm_cs_get_current_weapon_ent(victim);
+		if(weapon != -1 && cs_get_weapon_id(weapon) == CSW_KNIFE)
 		{
 			new knife = g_iPlayerKnife[attacker];
 			SetHamParamFloat(4, damage * g_eKnives[knife][DAMAGE]);
